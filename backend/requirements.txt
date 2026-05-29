@@ -1,0 +1,32 @@
+# Egli2.0 - Backend Dependencies
+# FastAPI & Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+websockets>=12.0
+sse-starlette>=1.8.0
+python-multipart>=0.0.6
+
+# Data Validation & Settings
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+pydantic-core>=2.10.0
+
+# Time Series Database
+influxdb-client>=1.40.0
+
+# SNMP Monitoring (easysnmp is optional — requires C compiler)
+# Install with: pip install easysnmp (Linux/macOS only)
+# On Windows, mock data fallback is used automatically
+pysnmp-lextudio>=6.0.0
+
+# Async & Scheduling
+apscheduler>=3.10.4
+httpx>=0.25.0
+
+# AI / Ollama Integration
+requests>=2.31.0
+
+# Utilities
+rich>=13.7.0
+python-dotenv>=1.0.0
+loguru>=0.7.2

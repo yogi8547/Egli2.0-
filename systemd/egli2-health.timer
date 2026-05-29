@@ -1,0 +1,33 @@
+# ── Egli2.0 — Health Check Timer ────────────────────────────────
+#  Runs the health check every 5 minutes to verify the stack is healthy.
+#  On failure, triggers alerts via the health check script itself.
+#
+#  Enable:
+#    systemctl enable --now egli2-health.timer
+#
+#  View:
+#    systemctl list-timers --all | grep egli2
+#    journalctl -u egli2-health -f
+# =============================================================================
+
+[Unit]
+Description=Egli2.0 — Periodic Health Check (every 5 min)
+Documentation=https://github.com/your-org/Egli2.0
+Requires=egli2.service egli2-health.service
+After=egli2.service
+
+[Timer]
+# Run every 5 minutes (300 seconds)
+OnUnitActiveSec=5min
+
+# Also run 60 seconds after the unit is first loaded
+OnBootSec=1min
+
+# Randomize by ±30 seconds to avoid thundering herd
+RandomizedDelaySec=30
+
+# Persist missed runs across reboots
+Persistent=true
+
+[Install]
+WantedBy=timers.target

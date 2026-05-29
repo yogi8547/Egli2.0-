@@ -1,0 +1,72 @@
+# ── Egli2.0 — systemd Service Unit ──────────────────────────────
+# Manages the Docker Compose stack (InfluxDB, Backend, Frontend, Ollama, Poller)
+# as a single systemd service that starts on boot and stops on shutdown.
+#
+# Features:
+#   • On-failure email/webhook alerts (via egli2-notify@.service)
+#   • Periodic health checks every 5 minutes (via egli2-health.timer)
+#   • Auto-remediation of unhealthy containers
+#
+# Installation:
+#   1. Edit WorkingDirectory to point to your install path
+#   2. Copy to /etc/systemd/system/egli2.service
+#   3. Run: systemctl daemon-reload
+#   4. Run: systemctl enable --now egli2.service
+#
+# Or use the companion install.sh script for automated setup.
+# ────────────────────────────────────────────────────────────────────────────
+
+[Unit]
+Description=Egli2.0 — Docker Compose Stack
+Documentation=https://github.com/your-org/Egli2.0
+Requires=docker.service network-online.target
+After=docker.service network-online.target
+Wants=network-online.target
+
+# ── Alerting ─────────────────────────────────────────────────────────────────
+# When this unit fails (e.g., docker compose fails to start), trigger the
+# notification service which sends email and webhook alerts.
+OnFailure=egli2-notify@%n.service
+OnFailureJobMode=fail
+
+[Service]
+# ── Path to the project root (edit for your deployment) ──────────────────
+WorkingDirectory=/opt/Egli2.0
+
+# ── User to run as (docker group membership required) ────────────────────
+User=root
+
+# ── Service lifecycle ─────────────────────────────────────────────────────
+# Type=oneshot with RemainAfterExit means:
+#   - 'systemctl start' runs ExecStart and marks the service as "active"
+#   - 'systemctl stop' runs ExecStop and marks the service as "inactive"
+#   - This is the correct pattern for docker compose (detached mode)
+Type=oneshot
+RemainAfterExit=yes
+
+# ── Boot: ensure the compose stack is up ──────────────────────────────────
+ExecStart=/usr/bin/docker compose -f docker-compose.yml up -d --remove-orphans
+
+# ── Shutdown: tear down the stack cleanly ────────────────────────────────
+ExecStop=/usr/bin/docker compose -f docker-compose.yml down
+
+# ── Reload: recreate containers if compose file changed ──────────────────
+ExecReload=/usr/bin/docker compose -f docker-compose.yml up -d --force-recreate
+
+# ── Restart behavior ─────────────────────────────────────────────────────
+# Don't auto-restart — docker compose handles container restarts internally.
+# If the unit itself fails, try once after 30 seconds.
+Restart=on-failure
+RestartSec=30
+
+# ── Hardening ──────────────────────────────────────────────────────────────
+# Docker CLI needs access to /var/run/docker.sock to communicate with the
+# Docker daemon. Using ProtectSystem=full (instead of strict) preserves the
+# Docker socket access while still protecting system directories.
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+# DynamicUser=true  # Uncomment for additional isolation (test first)
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,28 @@
+# ── Egli2.0 — Failure Notification Service ─────────────────────
+#  Template unit triggered by OnFailure= in the main egli2.service.
+#  Sends email / webhook alerts when the Docker Compose stack fails to start
+#  or stops unexpectedly.
+#
+#  The %I token is replaced by systemd with the name of the failed unit.
+#  This template can be reused for other services by adding:
+#    OnFailure=egli2-notify@%n.service
+#
+#  View:
+#    journalctl -u 'egli2-notify@*' -f
+# =============================================================================
+
+[Unit]
+Description=Egli2.0 — Failure Notification (%I)
+Documentation=https://github.com/your-org/Egli2.0
+# Don't restart — run once on failure, then stop
+RefuseManualStart=yes
+
+[Service]
+Type=oneshot
+ExecStart=/opt/Egli2.0/systemd/egli2-notify.sh %I /opt/Egli2.0
+RemainAfterExit=no
+
+# Security hardening — the script only reads logs and sends network requests
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true

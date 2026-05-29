@@ -1,0 +1,30 @@
+# ── Egli2.0 — Health Check Service ──────────────────────────────
+#  Runs the health check script once.  Typically triggered by
+#  egli2-health.timer, but can also be started manually:
+#    systemctl start egli2-health
+#
+#  View results:
+#    journalctl -u egli2-health -f
+# =============================================================================
+
+[Unit]
+Description=Egli2.0 — Stack Health Check
+Documentation=https://github.com/your-org/Egli2.0
+BindsTo=egli2.service
+After=egli2.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/Egli2.0/systemd/egli2-health.sh /opt/Egli2.0
+
+# Security hardening
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+
+# Resource limits
+CPUQuota=50%
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

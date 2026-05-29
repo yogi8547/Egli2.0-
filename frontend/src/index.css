@@ -1,0 +1,158 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base Styles ─────────────────────────────────────────────────────── */
+
+@layer base {
+  body {
+    @apply bg-dark-950 text-gray-100 font-sans;
+    min-height: 100vh;
+  }
+
+  ::-webkit-scrollbar {
+    @apply w-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-dark-900;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-dark-600 rounded-full hover:bg-dark-500;
+  }
+
+  ::selection {
+    @apply bg-accent-500/30 text-white;
+  }
+}
+
+/* ── Component Utilities ─────────────────────────────────────────────── */
+
+@layer components {
+  .glass-card {
+    @apply bg-dark-800/60 backdrop-blur-sm border border-dark-600/30 rounded-lg;
+  }
+
+  .gradient-border {
+    @apply border border-transparent bg-gradient-to-b from-dark-700 to-dark-800;
+    background-origin: border-box;
+    background-clip: padding-box, border-box;
+  }
+
+  .metric-value {
+    @apply font-mono text-lg font-semibold tracking-tight;
+  }
+
+  .metric-label {
+    @apply text-xs font-medium text-gray-400 uppercase tracking-wider;
+  }
+
+  .status-dot {
+    @apply inline-block w-2 h-2 rounded-full;
+  }
+
+  .status-dot.online {
+    @apply bg-success shadow-sm shadow-success/50;
+  }
+
+  .status-dot.offline {
+    @apply bg-danger shadow-sm shadow-danger/50;
+  }
+
+  .status-dot.degraded {
+    @apply bg-warning shadow-sm shadow-warning/50;
+  }
+
+  .status-dot.unknown {
+    @apply bg-gray-500;
+  }
+}
+
+/* ── Animations ───────────────────────────────────────────────────────── */
+
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+
+  .animate-slide-in-right {
+    animation: slideInRight 0.3s ease-out;
+  }
+
+  .animate-alert-pulse {
+    animation: alertPulse 2s ease-in-out infinite;
+  }
+
+  .animate-data-flow {
+    background: linear-gradient(90deg, transparent, rgba(129, 161, 193, 0.1), transparent);
+    background-size: 200% 100%;
+    animation: dataFlow 3s linear infinite;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes alertPulse {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(191, 97, 106, 0.15), 0 0 20px rgba(191, 97, 106, 0.05);
+    border-color: rgba(191, 97, 106, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(191, 97, 106, 0.3), 0 0 40px rgba(191, 97, 106, 0.1);
+    border-color: rgba(191, 97, 106, 0.6);
+  }
+}
+
+@keyframes dataFlow {
+  0% {
+    background-position: 0% 0%;
+  }
+  100% {
+    background-position: 200% 0%;
+  }
+}
+
+/* ── Recharts Override ───────────────────────────────────────────────── */
+
+.recharts-default-tooltip {
+  @apply !bg-dark-800 !border-dark-600 !rounded-lg !shadow-lg !backdrop-blur-sm;
+}
+
+.recharts-tooltip-label {
+  @apply !text-gray-300 !font-medium;
+}
+
+.recharts-tooltip-item {
+  @apply !text-gray-100 !font-mono;
+}
+
+.recharts-cartesian-grid-horizontal line,
+.recharts-cartesian-grid-vertical line {
+  @apply !stroke-dark-700/50;
+}
+
+.recharts-text {
+  @apply !fill-gray-400 !text-xs !font-mono;
+}

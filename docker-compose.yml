@@ -1,0 +1,182 @@
+# ── Egli2.0 — Docker Compose ─────────────────────────────────────────────
+# Deploy with: docker compose up -d
+# Teardown with: docker compose down -v
+
+version: "3.9"
+
+services:
+  # ── InfluxDB: Time-series database for metrics ──────────────────────
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: egli2-influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - ./influxdb/config.yml:/etc/influxdb2/config.yml:ro
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: admin-password
+      DOCKER_INFLUXDB_INIT_ORG: monitoring
+      DOCKER_INFLUXDB_INIT_BUCKET: metrics
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: admin-token
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - egli2-net
+
+  # ── Ollama: Local LLM inference service ─────────────────────────────
+  # Runs on CPU by default. For GPU acceleration on NVIDIA systems,
+  # uncomment the 'deploy' block below and install nvidia-docker.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: egli2-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    # Uncomment for GPU acceleration:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 120s
+    networks:
+      - egli2-net
+
+  # ── Ollama Model Puller (one-shot setup) ────────────────────────────
+  ollama-setup:
+    image: ollama/ollama:latest
+    container_name: egli2-ollama-setup
+    depends_on:
+      ollama:
+        condition: service_started
+    volumes:
+      - ollama-data:/root/.ollama
+    entrypoint: >
+      sh -c "
+        echo 'Waiting for Ollama server...' &&
+        sleep 10 &&
+        until ollama list 2>/dev/null; do echo 'Waiting...'; sleep 5; done &&
+        echo 'Pulling llama3.2 model...' &&
+        ollama pull llama3.2 &&
+        echo '✅ Model pulled successfully'
+      "
+    networks:
+      - egli2-net
+    profiles:
+      - setup
+
+  # ── Backend: FastAPI server ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: egli2-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    environment:
+      APP_NAME: "Egli2.0"
+      DEBUG: "false"
+      LOG_LEVEL: "INFO"
+      SECRET_KEY: "${SECRET_KEY:-change-me-in-production}"
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      INFLUXDB_URL: "http://influxdb:8086"
+      INFLUXDB_TOKEN: "admin-token"
+      INFLUXDB_ORG: "monitoring"
+      INFLUXDB_BUCKET: "metrics"
+      SNMP_COMMUNITY: "${SNMP_COMMUNITY:-public}"
+      SNMP_VERSION: "2c"
+      POLL_INTERVAL_SECONDS: "${POLL_INTERVAL:-60}"
+      OLLAMA_BASE_URL: "http://ollama:11434"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3.2}"
+      CPU_WARN_THRESHOLD: "${CPU_WARN:-75}"
+      CPU_CRIT_THRESHOLD: "${CPU_CRIT:-90}"
+      MEM_WARN_THRESHOLD: "${MEM_WARN:-80}"
+      MEM_CRIT_THRESHOLD: "${MEM_CRIT:-95}"
+      DISK_WARN_THRESHOLD: "${DISK_WARN:-85}"
+      DISK_CRIT_THRESHOLD: "${DISK_CRIT:-95}"
+      SEED_MOCK_DATA: "${SEED_MOCK:-true}"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - egli2-net
+
+  # ── Frontend: Nginx with React app ──────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: egli2-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - egli2-net
+
+  # ── SNMP Poller: Standalone polling microservice ────────────────────
+  poller:
+    build:
+      context: .
+      dockerfile: monitoring/Dockerfile
+    container_name: egli2-poller
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      INFLUXDB_URL: "http://influxdb:8086"
+      INFLUXDB_TOKEN: "admin-token"
+      INFLUXDB_ORG: "monitoring"
+      INFLUXDB_BUCKET: "metrics"
+      POLL_INTERVAL_SECONDS: "${POLL_INTERVAL:-60}"
+      SNMP_COMMUNITY: "${SNMP_COMMUNITY:-public}"
+      SEED_MOCK_DATA: "${SEED_MOCK:-true}"
+    networks:
+      - egli2-net
+
+networks:
+  egli2-net:
+    driver: bridge
+    name: egli2-network
+
+volumes:
+  influxdb-data:
+    name: egli2-influxdb-data
+  ollama-data:
+    name: egli2-ollama-data
