@@ -24,14 +24,36 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-echo [OK] Python and Node.js found
+where npm >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] npm not found. Install Node.js 18+ and try again.
+    exit /b 1
+)
+
+echo [OK] Python, Node.js, and npm found
+echo.
+
+REM ── Check dependencies ──────────────────────────────────────────────
+if not exist "venv\Scripts\activate.bat" (
+    echo [INFO] Dependencies not found. Running install-deps.bat...
+    call "%~dp0install-deps.bat"
+    if %ERRORLEVEL% neq 0 (
+        echo [ERROR] Dependency installation failed. See errors above.
+        exit /b 1
+    )
+) else if not exist "%~dp0frontend\node_modules" (
+    echo [INFO] Frontend dependencies not found. Running install-deps.bat...
+    call "%~dp0install-deps.bat"
+    if %ERRORLEVEL% neq 0 (
+        echo [ERROR] Dependency installation failed. See errors above.
+        exit /b 1
+    )
+) else (
+    echo [OK] All dependencies already installed
+)
 echo.
 
 REM ── Activate venv ───────────────────────────────────────────────────
-if not exist "venv\Scripts\activate.bat" (
-    echo [INFO] Creating Python virtual environment...
-    python -m venv venv
-)
 echo [INFO] Activating virtual environment...
 
 REM ── Start Backend ───────────────────────────────────────────────────
