@@ -19,6 +19,38 @@
 
 set -euo pipefail
 
+# ── Argument Parsing ─────────────────────────────────────────────────────────
+ACTION="deploy"
+
+for arg in "$@"; do
+    case "$arg" in
+        --uninstall|-u)
+            ACTION="uninstall"
+            ;;
+        --help|-h)
+            echo "Usage: sudo ./deploy-ubuntu.sh [OPTIONS] [INSTALL_DIR]"
+            echo ""
+            echo "Options:"
+            echo "  (none)                 Deploy Egli2.0 to the install directory"
+            echo "  --uninstall, -u        Remove all Egli2.0 services and files"
+            echo "  --help, -h             Show this help message"
+            echo ""
+            echo "Arguments:"
+            echo "  INSTALL_DIR            Target directory (default: /opt/Egli2.0)"
+            echo ""
+            echo "Environment variables:"
+            echo "  REPO_URL               Git repository URL to clone from"
+            echo ""
+            echo "Examples:"
+            echo "  sudo ./deploy-ubuntu.sh                          # Deploy to /opt/Egli2.0"
+            echo "  sudo ./deploy-ubuntu.sh /custom/path             # Deploy to custom path"
+            echo "  sudo ./deploy-ubuntu.sh --uninstall              # Remove everything"
+            echo "  sudo ./deploy-ubuntu.sh --uninstall /custom/path # Remove from custom path"
+            exit 0
+            ;;
+    esac
+done
+
 # ── Colors ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -37,7 +69,14 @@ WARN="\xE2\x9A\xA0\xEF\xB8\x8F"
 ROCKET="\xF0\x9F\x9A\x80"
 
 # ── Configuration ────────────────────────────────────────────────────────────
-INSTALL_DIR="${1:-/opt/Egli2.0}"
+# Only parse positional arg as install dir (skip flags)
+for arg in "$@"; do
+    if [[ "$arg" != "--"* ]]; then
+        INSTALL_DIR="$arg"
+        break
+    fi
+done
+INSTALL_DIR="${INSTALL_DIR:-/opt/Egli2.0}"
 REPO_URL="${REPO_URL:-}"         # Set this env var to clone from a remote repo
 LOG_FILE="$INSTALL_DIR/deploy-ubuntu.log"
 
@@ -203,9 +242,9 @@ EOF
     fi
 
     echo ""
-    cmd "docker --version"
+    info "Docker version:"
     docker --version
-    cmd "docker compose version"
+    info "Docker Compose version:"
     docker compose version
 
     # ── Phase 4: Configure Firewall ─────────────────────────────────────────
@@ -497,10 +536,128 @@ EOF
     echo ""
 }
 
+# ── Uninstall ──────────────────────────────────────────────────────────────
+
+uninstall() {
+    print_banner
+
+    section "Uninstalling Egli2.0"
+
+    if [[ $EUID -ne 0 ]]; then
+        fail "This script must be run as root (use sudo)."
+    fi
+
+    # Confirmation prompt
+    echo ""
+    echo -e "  ${YELLOW}WARNING: This will completely remove Egli2.0 from this server.${NC}"
+    echo ""
+    echo -e "  The following will be deleted:"
+    echo -e "    ${ARROW}  systemd services (egli2, egli2-health.timer, egli2-notify)"
+    echo -e "    ${ARROW}  Docker containers and volumes"
+    echo -e "    ${ARROW}  Project files ($INSTALL_DIR)"
+    echo ""
+    read -r -p "  Are you sure you want to uninstall? [y/N]: " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo ""
+        info "Uninstall cancelled."
+        exit 0
+    fi
+
+    # Stop and remove systemd services
+    info "Stopping and removing systemd services..."
+    for unit in egli2 egli2-health egli2-notify; do
+        if systemctl is-active --quiet "$unit" 2>/dev/null; then
+            systemctl stop "$unit" 2>/dev/null || true
+            log "Stopped $unit"
+        fi
+        if systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+            systemctl disable "$unit" 2>/dev/null || true
+            log "Disabled $unit"
+        fi
+    done
+    for timer in egli2-health.timer; do
+        if systemctl is-active --quiet "$timer" 2>/dev/null; then
+            systemctl stop "$timer" 2>/dev/null || true
+            log "Stopped $timer"
+        fi
+        if systemctl is-enabled --quiet "$timer" 2>/dev/null; then
+            systemctl disable "$timer" 2>/dev/null || true
+            log "Disabled $timer"
+        fi
+    done
+
+    # Remove systemd unit files
+    info "Removing systemd unit files..."
+    for unit_file in egli2.service egli2-health.service egli2-health.timer egli2-notify@.service; do
+        if [[ -f "/etc/systemd/system/$unit_file" ]]; then
+            rm -f "/etc/systemd/system/$unit_file"
+            log "Removed /etc/systemd/system/$unit_file"
+        fi
+    done
+    systemctl daemon-reload 2>/dev/null || true
+    log "systemd daemon reloaded"
+
+    # Stop and remove Docker containers, networks, volumes
+    if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
+        info "Stopping Docker Compose stack..."
+        (cd "$INSTALL_DIR" && docker compose down -v --remove-orphans 2>/dev/null) || true
+        log "Docker Compose stack stopped and volumes removed"
+    fi
+
+    # Remove Docker images built by this project
+    info "Removing project Docker images..."
+    for img in egli2-backend egli2-frontend egli2-poller; do
+        docker rmi "$img" 2>/dev/null && log "Removed image $img" || true
+    done
+
+    # Remove the install directory
+    if [[ -d "$INSTALL_DIR" ]]; then
+        info "Removing install directory: $INSTALL_DIR"
+        # Save log file path before deletion
+        local log_path="$LOG_FILE"
+        rm -rf "$INSTALL_DIR"
+        log "Removed $INSTALL_DIR"
+    else
+        warn "Install directory not found: $INSTALL_DIR"
+    fi
+
+    # Optionally remove Docker itself (only if it was installed by this script)
+    section "Docker Cleanup (optional)"
+    echo ""
+    read -r -p "  Remove Docker Engine as well? [y/N]: " remove_docker
+    if [[ "$remove_docker" =~ ^[Yy]$ ]]; then
+        info "Removing Docker Engine..."
+        apt-get purge -y docker-ce docker-ce-cli containerd.io \
+            docker-buildx-plugin docker-compose-plugin 2>/dev/null || true
+        apt-get autoremove -y 2>/dev/null || true
+        rm -rf /etc/docker /var/lib/docker
+        log "Docker Engine removed"
+    else
+        info "Keeping Docker Engine installed"
+    fi
+
+    section "Uninstall Complete"
+    echo ""
+    echo -e "  ${GREEN}${CHECK_MARK}${NC} Egli2.0 has been removed."
+    echo ""
+    echo -e "  Removed:"
+    echo -e "    ${ARROW}  systemd services (egli2, egli2-health.timer, egli2-notify)"
+    echo -e "    ${ARROW}  Docker containers and volumes"
+    echo -e "    ${ARROW}  Project files ($INSTALL_DIR)"
+    if [[ "$remove_docker" =~ ^[Yy]$ ]]; then
+        echo -e "    ${ARROW}  Docker Engine"
+    fi
+    echo ""
+}
+
 # ── Run ──────────────────────────────────────────────────────────────────────
 
 # Set up logging — capture all output to both terminal and log file
 mkdir -p "$(dirname "$LOG_FILE")"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-main "$@"
+if [[ "$ACTION" == "uninstall" ]]; then
+    uninstall
+else
+    main "$@"
+fi

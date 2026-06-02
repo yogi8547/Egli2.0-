@@ -21,3 +21,6 @@ dist/
 .vscode/
 *.swp
 *.swo
+node_modules/
+dist/
+frontend/coverage/

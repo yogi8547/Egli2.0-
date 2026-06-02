@@ -201,7 +201,7 @@ def main():
     for i in range(0, len(points), batch_size):
         batch = points[i:i + batch_size]
         try:
-            db.write.write(bucket=settings.influxdb_bucket, record=batch)
+            db.write_metrics_batch(batch)
             total_written += len(batch)
             logger.info("  Written {} / {} points...", total_written, len(points))
         except Exception as exc:

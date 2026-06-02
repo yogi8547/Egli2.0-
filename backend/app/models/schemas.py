@@ -40,6 +40,15 @@ class MetricType(str, Enum):
 
 # ─── Server Models ───────────────────────────────────────────────────────────
 
+class SNMPAuthProtocol(str, Enum):
+    MD5 = "MD5"
+    SHA = "SHA"
+
+class SNMPPrivProtocol(str, Enum):
+    DES = "DES"
+    AES = "AES"
+
+
 class ServerBase(BaseModel):
     """Core server identity."""
     id: str = Field(..., description="Unique server hostname or IP")
@@ -48,10 +57,34 @@ class ServerBase(BaseModel):
     port: int = Field(default=161, description="SNMP port")
     snmp_version: str = Field(default="2c", description="SNMP version (2c or 3)")
     snmp_community: str = Field(default="public", description="SNMP community string (v2c)")
+    # SNMPv3 auth fields
+    snmp_username: Optional[str] = Field(default=None, description="SNMPv3 username")
+    snmp_auth_protocol: Optional[SNMPAuthProtocol] = Field(default=None, description="SNMPv3 auth protocol (MD5 or SHA)")
+    snmp_auth_password: Optional[str] = Field(default=None, description="SNMPv3 auth password")
+    snmp_priv_protocol: Optional[SNMPPrivProtocol] = Field(default=None, description="SNMPv3 privacy protocol (DES or AES)")
+    snmp_priv_password: Optional[str] = Field(default=None, description="SNMPv3 privacy password")
+
 
 class ServerCreate(ServerBase):
     """Request: register a new server to monitor."""
     tags: dict[str, str] = Field(default_factory=dict)
+
+class ServerUpdate(BaseModel):
+    """Request: update an existing server's registration details.
+    All fields are optional — only provided fields will be updated.
+    """
+    name: Optional[str] = Field(default=None, description="Display name")
+    host: Optional[str] = Field(default=None, description="SNMP host address")
+    port: Optional[int] = Field(default=None, description="SNMP port")
+    snmp_version: Optional[str] = Field(default=None, description="SNMP version (2c or 3)")
+    snmp_community: Optional[str] = Field(default=None, description="SNMP community string (v2c)")
+    snmp_username: Optional[str] = Field(default=None, description="SNMPv3 username")
+    snmp_auth_protocol: Optional[SNMPAuthProtocol] = Field(default=None, description="SNMPv3 auth protocol (MD5 or SHA)")
+    snmp_auth_password: Optional[str] = Field(default=None, description="SNMPv3 auth password")
+    snmp_priv_protocol: Optional[SNMPPrivProtocol] = Field(default=None, description="SNMPv3 privacy protocol (DES or AES)")
+    snmp_priv_password: Optional[str] = Field(default=None, description="SNMPv3 privacy password")
+    tags: Optional[dict[str, str]] = Field(default=None, description="Server tags")
+
 
 class ServerResponse(ServerBase):
     """Response: server info with computed status."""
@@ -67,6 +100,35 @@ class ServerListResponse(BaseModel):
     """Response: list of servers."""
     servers: list[ServerResponse]
     total: int
+
+class BulkImportRequest(BaseModel):
+    """Request: bulk import multiple servers at once."""
+    servers: list[ServerCreate] = Field(..., description="Array of server registration objects")
+    skip_duplicates: bool = Field(default=False, description="Skip servers that already exist instead of failing")
+
+class BulkImportResult(BaseModel):
+    """Result for a single server in a bulk import."""
+    id: str = Field(..., description="Server ID")
+    name: str = Field(..., description="Server display name")
+    status: str = Field(..., description="'created' or 'skipped' or 'error'")
+    error: Optional[str] = Field(default=None, description="Error message if status is 'error'")
+
+class BulkImportResponse(BaseModel):
+    """Response: bulk import results."""
+    total: int = Field(..., description="Total servers in request")
+    created: int = Field(..., description="Number of servers successfully registered")
+    skipped: int = Field(..., description="Number of servers skipped (duplicates)")
+    errors: int = Field(..., description="Number of servers that failed")
+    results: list[BulkImportResult] = Field(..., description="Per-server result details")
+
+class TestConnectionResult(BaseModel):
+    """Response: result of a manual SNMP connection test."""
+    success: bool = Field(..., description="Whether the SNMP connection succeeded")
+    message: str = Field(..., description="Human-readable result message")
+    sys_name: Optional[str] = Field(default=None, description="Remote system name (if connected)")
+    uptime_seconds: Optional[float] = Field(default=None, description="System uptime (if connected)")
+    duration_ms: float = Field(..., description="Time taken for the test in milliseconds")
+    error: Optional[str] = Field(default=None, description="Error details if failed")
 
 # ─── Metric Models ───────────────────────────────────────────────────────────
 

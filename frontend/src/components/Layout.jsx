@@ -15,25 +15,42 @@ import {
   Menu,
   Shield,
   TrendingUp,
+  Network,
+  Sun,
+  Moon,
+  Radio,
 } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
 import LiveClock from './LiveClock';
 import CountdownTimer from './CountdownTimer';
+import AIOpsPanel from './AIOpsPanel';
 
 const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: Activity },
   { id: 'servers', label: 'Servers', icon: Server },
+  { id: 'network', label: 'Network', icon: Network },
   { id: 'alerts', label: 'Alerts', icon: Bell },
   { id: 'self-healing', label: 'Self-Healing', icon: Shield },
   { id: 'forecasts', label: 'Forecasts', icon: TrendingUp },
   { id: 'ai', label: 'AI Assistant', icon: Bot },
 ];
 
-export default function Layout({ children, activeView, onNavigate, connected, alertCount, pollRemaining = 60, pollInterval = 60 }) {
+const AIOPS_BUTTON_ID = '__aiops__';
+
+export default function Layout({ children, activeView, onNavigate, connected, alertCount, pollRemaining = 60, pollInterval = 60, servers, metrics, alerts }) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [aiopsOpen, setAIOpsOpen] = useState(false);
+  const { theme, toggleTheme } = useTheme();
+  const [spinKey, setSpinKey] = useState(0);
+
+  const handleToggleTheme = () => {
+    toggleTheme();
+    setSpinKey((k) => k + 1);
+  };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-dark-950">
+    <div className="flex h-screen overflow-hidden" style={{ backgroundColor: 'var(--theme-bg)' }}>
       {/* ── Sidebar ──────────────────────────────────────────────────── */}
       <aside
         className={`
@@ -44,21 +61,21 @@ export default function Layout({ children, activeView, onNavigate, connected, al
           ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         `}
       >
-        {/* Logo */}
-        <div className={`flex items-center h-16 px-4 border-b border-dark-700/50 ${sidebarOpen ? 'justify-between' : 'justify-center'}`}>
+        {/* Logo - Navy + Electric Blue branding */}
+        <div className={`flex items-center h-16 px-4 border-b border-dark-700/50 ${sidebarOpen ? 'justify-between' : 'justify-center'}`} style={{ background: 'linear-gradient(135deg, var(--navy-primary) 0%, #002458 100%)' }}>
           {sidebarOpen && (
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-accent-500/20 rounded-lg flex items-center justify-center">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-accent-500/20">
                 <Activity className="w-5 h-5 text-accent-500" />
               </div>
               <div>
                 <h2 className="text-sm font-semibold text-white">Egli2.0</h2>
-                <p className="text-[10px] text-gray-500">Infrastructure</p>
+                <p className="text-[10px] text-accent-400/60">Infrastructure</p>
               </div>
             </div>
           )}
           {!sidebarOpen && (
-            <div className="w-10 h-10 bg-accent-500/20 rounded-lg flex items-center justify-center">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-accent-500/20">
               <Activity className="w-6 h-6 text-accent-500" />
             </div>
           )}
@@ -76,11 +93,12 @@ export default function Layout({ children, activeView, onNavigate, connected, al
                   onNavigate(item.id);
                   setMobileOpen(false);
                 }}
+                style={isActive ? { background: 'rgba(0, 185, 241, 0.15)' } : {}}
                 className={`
                   w-full flex items-center gap-3 px-3 py-2.5 rounded-lg
                   transition-all duration-200 text-sm font-medium
                   ${isActive
-                    ? 'bg-accent-500/15 text-accent-500 shadow-sm'
+                    ? 'text-accent-500 shadow-sm'
                     : 'text-gray-400 hover:text-white hover:bg-dark-800/50'
                   }
                   ${!sidebarOpen && 'justify-center px-0'}
@@ -141,7 +159,22 @@ export default function Layout({ children, activeView, onNavigate, connected, al
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="hidden lg:block text-gray-400 hover:text-white"
           >
-            <Menu className="w-5 h-5" />
+            <Menu
+              className={`w-5 h-5 transition-transform duration-300 ease-in-out ${sidebarOpen ? 'rotate-0' : 'rotate-180'}`}
+            />
+          </button>
+
+          {/* AI Ops toggle */}
+          <button
+            onClick={() => setAIOpsOpen(!aiopsOpen)}
+            className={`p-2 rounded-lg transition-all duration-200 ${
+              aiopsOpen
+                ? 'bg-info/20 text-info'
+                : 'text-gray-400 hover:text-white hover:bg-dark-700/50'
+            }`}
+            title={aiopsOpen ? 'Close AI Ops' : 'Open AI Ops Assistant'}
+          >
+            <Radio className="w-4 h-4" />
           </button>
 
           <div className="flex-1" />
@@ -160,6 +193,21 @@ export default function Layout({ children, activeView, onNavigate, connected, al
           {/* Poll countdown */}
           <CountdownTimer seconds={pollInterval} remaining={pollRemaining} size={32} />
 
+          {/* Theme toggle */}
+          <button
+            onClick={handleToggleTheme}
+            className="p-2 rounded-lg text-gray-400 hover:text-accent-500 hover:bg-dark-700/50 transition-all duration-200"
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            <div key={spinKey} className="animate-spin-once">
+              {theme === 'dark' ? (
+                <Sun className="w-4 h-4" />
+              ) : (
+                <Moon className="w-4 h-4" />
+              )}
+            </div>
+          </button>
+
           {/* Live clock */}
           <LiveClock />
 
@@ -173,10 +221,19 @@ export default function Layout({ children, activeView, onNavigate, connected, al
         </header>
 
         {/* Content area */}
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className={`flex-1 overflow-y-auto p-6 transition-all duration-300 ${aiopsOpen ? 'lg:mr-0' : ''}`}>
           {children}
         </main>
       </div>
+
+      {/* AI Ops Panel */}
+      <AIOpsPanel
+        servers={servers}
+        metrics={metrics}
+        alerts={alerts}
+        visible={aiopsOpen}
+        onClose={() => setAIOpsOpen(false)}
+      />
     </div>
   );
 }

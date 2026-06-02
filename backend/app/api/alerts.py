@@ -11,13 +11,14 @@ Endpoints:
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
 from app.models.schemas import Alert, AlertListResponse
 from app.services.alert_engine import alert_engine
 from app.services.ai_service import ai_service
+from app.services.remediation_engine import remediation_engine
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
@@ -64,14 +65,66 @@ async def resolve_alert(alert_id: str):
     return alert
 
 
-@router.post("/{alert_id}/remediate")
-async def get_remediation(alert_id: str):
-    """Get AI-suggested remediation for an alert."""
-    alert = alert_engine.get_all_alerts()
-    target = next((a for a in alert if a.id == alert_id), None)
+@router.get("/{alert_id}/remediation-actions")
+async def get_predefined_remediation_actions(alert_id: str):
+    """Get predefined remediation actions for an alert (instant, no AI)."""
+    alerts = alert_engine.get_all_alerts()
+    target = next((a for a in alerts if a.id == alert_id), None)
     if not target:
         raise HTTPException(status_code=404, detail=f"Alert '{alert_id}' not found")
 
-    remediation = await ai_service.analyze_alert(target)
-    alert_engine.set_remediation(alert_id, remediation)
-    return {"alert_id": alert_id, "remediation": remediation}
+    actions = remediation_engine.get_predefined_actions(target)
+    return {
+        "alert_id": alert_id,
+        "metric": target.metric,
+        "actions": actions,
+        "total": len(actions),
+    }
+
+
+@router.post("/{alert_id}/execute-action")
+async def execute_remediation_action(alert_id: str, action: str = Query(..., description="Action name to execute (e.g. kill_top_cpu_process)")):
+    """Execute a single predefined remediation action for an alert."""
+    alerts = alert_engine.get_all_alerts()
+    target = next((a for a in alerts if a.id == alert_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail=f"Alert '{alert_id}' not found")
+
+    result = await remediation_engine.execute_single_action(target, action)
+    return {
+        "alert_id": alert_id,
+        "result": result,
+    }
+
+
+@router.post("/{alert_id}/remediate")
+async def get_ai_remediation(alert_id: str, deep: bool = False):
+    """
+    Get remediation for an alert.
+
+    - `deep=false` (default): Returns predefined actions instantly (no AI)
+    - `deep=true`: Returns AI-generated deep analysis (may be slow)
+    """
+    alerts = alert_engine.get_all_alerts()
+    target = next((a for a in alerts if a.id == alert_id), None)
+    if not target:
+        raise HTTPException(status_code=404, detail=f"Alert '{alert_id}' not found")
+
+    if deep:
+        # AI-powered deep analysis (slow)
+        remediation = await ai_service.analyze_alert(target)
+        alert_engine.set_remediation(alert_id, remediation)
+        return {
+            "alert_id": alert_id,
+            "type": "ai_analysis",
+            "remediation": remediation,
+        }
+    else:
+        # Predefined actions (instant)
+        actions = remediation_engine.get_predefined_actions(target)
+        return {
+            "alert_id": alert_id,
+            "type": "predefined_actions",
+            "actions": actions,
+            "total": len(actions),
+        }

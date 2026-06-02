@@ -31,10 +31,11 @@ router = APIRouter(prefix="/api", tags=["self-healing"])
 @router.get("/remediation/logs")
 async def get_remediation_logs(
     server: Optional[str] = Query(default=None, description="Filter by server"),
+    alert_id: Optional[str] = Query(default=None, description="Filter by alert ID"),
     limit: int = Query(default=50, description="Max logs to return"),
 ):
     """Get remediation action logs."""
-    logs = remediation_engine.get_logs(server=server, limit=limit)
+    logs = remediation_engine.get_logs(server=server, alert_id=alert_id, limit=limit)
     return {"logs": logs, "total": len(logs)}
 
 

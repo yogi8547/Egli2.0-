@@ -7,7 +7,7 @@
  * - Global data state (metrics, alerts, servers)
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Layout from './components/Layout';
 import SystemOverview from './components/SystemOverview';
 import ServerCard from './components/ServerCard';
@@ -15,10 +15,14 @@ import MetricChart from './components/MetricChart';
 import AlertPanel from './components/AlertPanel';
 import AIChat from './components/AIChat';
 import SelfHealingPanel from './components/SelfHealingPanel';
+import NetworkTopology from './components/NetworkTopology';
+import AddServerModal from './components/AddServerModal';
+import ImportServersModal from './components/ImportServersModal';
 import ForecastCard from './components/ForecastCard';
-import { Activity } from 'lucide-react';
+import { Activity, Plus, Server, Upload, Download } from 'lucide-react';
 import ParticleBackground from './components/ParticleBackground';
 import { ToastProvider, useToast } from './components/Toast';
+import { ThemeProvider } from './context/ThemeContext';
 
 const API_BASE = '/api';
 
@@ -165,6 +169,7 @@ export default function App() {
 
   // ── Render ───────────────────────────────────────────────────────────
   return (
+    <ThemeProvider>
     <ToastProvider>
       <ToastConnector />
       <ParticleBackground intensity={1} />
@@ -175,53 +180,61 @@ export default function App() {
         alertCount={activeAlertCount}
         pollRemaining={pollRemaining}
         pollInterval={60}
+        servers={servers}
+        metrics={metrics}
+        alerts={alerts}
       >
-      {loading ? (
-        <LoadingScreen />
-      ) : (
-        <>
-          {activeView === 'overview' && (
-            <SystemOverview
-              overview={overview}
-              servers={servers}
-              metrics={metrics}
-              alerts={alerts}
-              onViewChange={setActiveView}
-            />
-          )}
+      {activeView === 'overview' && (
+        <SystemOverview
+          overview={overview}
+          servers={servers}
+          metrics={metrics}
+          alerts={alerts}
+          onViewChange={setActiveView}
+          loading={loading}
+        />
+      )}
 
-          {activeView === 'servers' && (
-            <ServerGrid
-              servers={servers}
-              metrics={metrics}
-              alerts={alerts}
-              onFetchHistory={fetchHistory}
-              metricHistory={metricHistory}
-            />
-          )}
+      {activeView === 'servers' && !loading && (
+        <ServerGrid
+          servers={servers}
+          metrics={metrics}
+          alerts={alerts}
+          onFetchHistory={fetchHistory}
+          metricHistory={metricHistory}
+          onAddServer={fetchInitialData}
+        />
+      )}
 
-          {activeView === 'alerts' && (
-            <AlertPanel
-              alerts={alerts}
-              onRefresh={fetchInitialData}
-            />
-          )}
+      {activeView === 'alerts' && !loading && (
+        <AlertPanel
+          alerts={alerts}
+          onRefresh={fetchInitialData}
+        />
+      )}
 
-          {activeView === 'ai' && (
-            <AIChat servers={servers} metrics={metrics} alerts={alerts} />
-          )}
+      {activeView === 'ai' && !loading && (
+        <AIChat servers={servers} metrics={metrics} alerts={alerts} />
+      )}
 
-          {activeView === 'self-healing' && (
-            <SelfHealingPanel />
-          )}
+      {activeView === 'network' && !loading && (
+        <NetworkTopology
+          servers={servers}
+          metrics={metrics}
+          alerts={alerts}
+        />
+      )}
 
-          {activeView === 'forecasts' && (
-            <ForecastView servers={servers} />
-          )}
-        </>
+      {activeView === 'self-healing' && !loading && (
+        <SelfHealingPanel />
+      )}
+
+      {activeView === 'forecasts' && !loading && (
+        <ForecastView servers={servers} />
       )}
     </Layout>
     </ToastProvider>
+    </ThemeProvider>
   );
 }
 
@@ -236,20 +249,6 @@ function ToastConnector() {
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────
-
-function LoadingScreen() {
-  return (
-    <div className="flex flex-col items-center justify-center h-96 gap-4">
-      <div className="relative w-16 h-16">
-        <div className="absolute inset-0 border-4 border-dark-600 rounded-full" />
-        <div className="absolute inset-0 border-4 border-t-accent-500 rounded-full animate-spin" />
-      </div>
-      <p className="text-gray-400 font-mono text-sm animate-pulse">
-        Initializing monitoring systems...
-      </p>
-    </div>
-  );
-}
 
 function ForecastView({ servers }) {
   const [forecasts, setForecasts] = useState([]);
@@ -314,7 +313,7 @@ function ForecastView({ servers }) {
   );
 }
 
-function ServerGrid({ servers, metrics, alerts, onFetchHistory, metricHistory }) {
+function ServerGrid({ servers, metrics, alerts, onFetchHistory, metricHistory, onAddServer }) {
   // Filter alerts by server
   const alertsByServer = {};
   (alerts || []).forEach((a) => {
@@ -322,25 +321,183 @@ function ServerGrid({ servers, metrics, alerts, onFetchHistory, metricHistory })
     alertsByServer[a.server].push(a);
   });
 
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [editingServer, setEditingServer] = useState(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [activeTagFilter, setActiveTagFilter] = useState(null); // { key, value } or null
+
+  // ── Extract unique tags with counts ─────────────────────────────────
+  const tagFilters = useMemo(() => {
+    const tagMap = new Map(); // "key=value" -> count
+    (servers || []).forEach((srv) => {
+      if (srv.tags) {
+        Object.entries(srv.tags).forEach(([key, value]) => {
+          const keyval = `${key}=${value}`;
+          tagMap.set(keyval, (tagMap.get(keyval) || 0) + 1);
+        });
+      }
+    });
+    return Array.from(tagMap.entries())
+      .map(([keyval, count]) => {
+        const eqIdx = keyval.indexOf('=');
+        return { key: keyval.slice(0, eqIdx), value: keyval.slice(eqIdx + 1), keyval, count };
+      })
+      .sort((a, b) => b.count - a.count); // most common tags first
+  }, [servers]);
+
+  // ── Filter servers by active tag ───────────────────────────────────
+  const filteredServers = useMemo(() => {
+    if (!activeTagFilter) return servers;
+    return (servers || []).filter((srv) =>
+      srv.tags && srv.tags[activeTagFilter.key] === activeTagFilter.value
+    );
+  }, [servers, activeTagFilter]);
+
+  const hasActiveFilter = activeTagFilter !== null;
+
+  // ── Export servers as JSON file ────────────────────────────────────
+  async function handleExport() {
+    try {
+      const res = await fetch('/api/servers/export');
+      if (!res.ok) throw new Error('Export failed');
+      const data = await res.json();
+
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `servers-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      if (window.__toast?.addToast) {
+        window.__toast.addToast({
+          type: 'success',
+          title: 'Exported',
+          message: `${data.length} server${data.length !== 1 ? 's' : ''} exported to JSON`,
+          duration: 4000,
+        });
+      }
+    } catch (err) {
+      if (window.__toast?.addToast) {
+        window.__toast.addToast({
+          type: 'critical',
+          title: 'Export Failed',
+          message: err.message,
+          duration: 6000,
+        });
+      }
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Servers</h1>
           <p className="text-sm text-gray-400 mt-1">
-            {servers.length} servers registered
+            {hasActiveFilter
+              ? `${filteredServers.length} of ${servers.length} server${servers.length !== 1 ? 's' : ''}`
+              : `${servers.length} server${servers.length !== 1 ? 's' : ''} registered`
+            }
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="status-dot online" />
-          <span className="text-xs text-gray-400">
-            {servers.length} online
-          </span>
+        <div className="flex items-center gap-3">
+          {servers.length > 0 && (
+            <>
+              <button
+                onClick={handleExport}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-400 hover:text-white bg-dark-800 hover:bg-dark-700 border border-dark-700/50 rounded-lg transition-all"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export
+              </button>
+              <button
+                onClick={() => setImportModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-400 hover:text-white bg-dark-800 hover:bg-dark-700 border border-dark-700/50 rounded-lg transition-all"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                Import
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => setAddModalOpen(true)}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-accent-500 bg-accent-500/10 hover:bg-accent-500/20 border border-accent-500/20 rounded-lg transition-all"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add Server
+          </button>
+          <div className="flex items-center gap-2">
+            <span className="status-dot online" />
+            <span className="text-xs text-gray-400">
+              {servers.length} online
+            </span>
+          </div>
         </div>
       </div>
 
+      <AddServerModal
+        isOpen={addModalOpen || Boolean(editingServer)}
+        onClose={() => { setAddModalOpen(false); setEditingServer(null); }}
+        onServerAdded={onAddServer}
+        editServer={editingServer}
+      />
+
+      <ImportServersModal
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onImported={onAddServer}
+      />
+
+      {/* ── Tag filter bar ────────────────────────────────────────────── */}
+      {tagFilters.length > 0 && (
+        <div className="flex items-center flex-wrap gap-1.5">
+          <button
+            onClick={() => setActiveTagFilter(null)}
+            className={`px-2.5 py-1 text-[10px] font-medium rounded-full transition-all ${
+              !hasActiveFilter
+                ? 'bg-accent-500/20 text-accent-500 border border-accent-500/30'
+                : 'text-gray-500 border border-dark-700/30 hover:text-gray-300 hover:border-dark-600/50'
+            }`}
+          >
+            All Servers
+          </button>
+          {tagFilters.map((tag) => (
+            <button
+              key={tag.keyval}
+              onClick={() => setActiveTagFilter(
+                hasActiveFilter && activeTagFilter.key === tag.key && activeTagFilter.value === tag.value
+                  ? null
+                  : { key: tag.key, value: tag.value }
+              )}
+              className={`px-2.5 py-1 text-[10px] font-medium rounded-full transition-all ${
+                hasActiveFilter && activeTagFilter.key === tag.key && activeTagFilter.value === tag.value
+                  ? 'bg-accent-500/20 text-accent-500 border border-accent-500/30'
+                  : 'text-gray-500 border border-dark-700/30 hover:text-gray-300 hover:border-dark-600/50'
+              }`}
+            >
+              <span className="text-[9px] opacity-60 mr-1">{tag.key}=</span>
+              <span>{tag.value}</span>
+              <span className="ml-1 text-[9px] opacity-50">{tag.count}</span>
+            </button>
+          ))}
+          {hasActiveFilter && (
+            <button
+              onClick={() => setActiveTagFilter(null)}
+              className="px-2 py-1 text-[10px] font-medium text-gray-500 hover:text-gray-300 transition-all"
+            >
+              Clear filter
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ── Server cards grid ─────────────────────────────────────────── */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {servers.map((server) => (
+        {filteredServers.map((server) => (
           <ServerCard
             key={server.id}
             server={server}
@@ -350,9 +507,37 @@ function ServerGrid({ servers, metrics, alerts, onFetchHistory, metricHistory })
               onFetchHistory(server.name, measurement)
             }
             metricHistory={metricHistory}
+            onDelete={onAddServer}
+            onEdit={(server) => { setEditingServer(server); }}
           />
         ))}
       </div>
+
+      {filteredServers.length === 0 && servers.length === 0 && (
+        <div className="glass-card p-12 flex flex-col items-center justify-center gap-3">
+          <Server className="w-10 h-10 text-gray-600" />
+          <p className="text-gray-400 text-sm">No servers registered</p>
+          <p className="text-gray-600 text-xs">
+            Click "Add Server" to register your first SNMP monitoring target
+          </p>
+        </div>
+      )}
+
+      {filteredServers.length === 0 && servers.length > 0 && (
+        <div className="glass-card p-12 flex flex-col items-center justify-center gap-3">
+          <Server className="w-10 h-10 text-gray-600" />
+          <p className="text-gray-400 text-sm">No servers match this filter</p>
+          <p className="text-gray-600 text-xs">
+            Try selecting a different tag, or{' '}
+            <button
+              onClick={() => setActiveTagFilter(null)}
+              className="text-accent-500 hover:text-accent-400 underline"
+            >
+              clear the filter
+            </button>
+          </p>
+        </div>
+      )}
     </div>
   );
 }

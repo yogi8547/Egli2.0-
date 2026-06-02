@@ -12,11 +12,11 @@ import {
 } from 'recharts';
 
 const CHART_COLORS = {
-  cpu: '#81a1c1',
+  cpu: '#00B9F1',
   memory: '#ebcb8b',
   disk: '#a3be8c',
   network: '#b48ead',
-  default: '#81a1c1',
+  default: '#00B9F1',
 };
 
 function CustomTooltip({ active, payload, label }) {
@@ -124,10 +124,10 @@ export default function MetricChart({
         return (
           <AreaChart data={formattedData}>
             <defs>
-              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <lineargradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={color} stopOpacity={0.3} />
                 <stop offset="100%" stopColor={color} stopOpacity={0} />
-              </linearGradient>
+              </lineargradient>
             </defs>
             {showGrid && <CartesianGrid strokeDasharray="3 3" stroke="#404040" strokeOpacity={0.3} />}
             <XAxis

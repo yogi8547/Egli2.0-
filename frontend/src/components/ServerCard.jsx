@@ -16,6 +16,12 @@ import {
   Terminal,
   Activity,
   AlertTriangle,
+  Trash2,
+  Loader,
+  PenLine,
+  Wifi,
+  CheckCircle,
+  XCircle,
 } from 'lucide-react';
 import { useAnimatedNumber } from '../hooks/useAnimatedNumber';
 import {
@@ -29,7 +35,7 @@ function MetricGauge({ label, value, icon: Icon, color, unit = '%', trend = [] }
   const gaugeColor =
     value > 90 ? '#bf616a' :
     value > 75 ? '#ebcb8b' :
-    color || '#81a1c1';
+    color || '#00B9F1';
 
   return (
     <div className="space-y-2">
@@ -60,10 +66,10 @@ function MetricGauge({ label, value, icon: Icon, color, unit = '%', trend = [] }
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={trend}>
               <defs>
-                <linearGradient id={`spark-${label}`} x1="0" y1="0" x2="0" y2="1">
+                <lineargradient id={`spark-${label}`} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={gaugeColor} stopOpacity={0.3} />
                   <stop offset="100%" stopColor={gaugeColor} stopOpacity={0} />
-                </linearGradient>
+                </lineargradient>
               </defs>
               <Area
                 type="monotone"
@@ -81,8 +87,77 @@ function MetricGauge({ label, value, icon: Icon, color, unit = '%', trend = [] }
   );
 }
 
-export default function ServerCard({ server, metrics, alerts, onFetchHistory, metricHistory }) {
+export default function ServerCard({ server, metrics, alerts, onFetchHistory, metricHistory, onDelete, onEdit }) {
   const [expanded, setExpanded] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null); // { success, message, sys_name?, uptime_seconds?, duration_ms, error? }
+
+  async function handleTestConnection() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch(`/api/servers/${encodeURIComponent(server.id)}/test-connection`);
+      const data = await res.json();
+      if (!res.ok) {
+        setTestResult({
+          success: false,
+          message: data.detail || `Server error (${res.status})`,
+          duration_ms: 0,
+          error: data.detail || `HTTP ${res.status}`,
+        });
+      } else {
+        setTestResult(data);
+      }
+    } catch (err) {
+      setTestResult({
+        success: false,
+        message: err.message,
+        error: err.message,
+        duration_ms: 0,
+      });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/servers/${encodeURIComponent(server.id)}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `Delete failed (${res.status})`);
+      }
+
+      if (window.__toast?.addToast) {
+        window.__toast.addToast({
+          type: 'success',
+          title: 'Server Removed',
+          message: `${server.name} (${server.host}) has been removed from monitoring.`,
+          duration: 5000,
+        });
+      }
+
+      setShowDeleteConfirm(false);
+      onDelete?.();
+    } catch (err) {
+      if (window.__toast?.addToast) {
+        window.__toast.addToast({
+          type: 'critical',
+          title: 'Delete Failed',
+          message: err.message,
+          duration: 8000,
+        });
+      }
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   const statusColor = {
     online: 'bg-success',
@@ -158,7 +233,7 @@ export default function ServerCard({ server, metrics, alerts, onFetchHistory, me
 
       {/* Metrics */}
       <div className="px-4 pb-4 space-y-3">
-        <MetricGauge label="CPU" value={cpu} icon={Cpu} color="#81a1c1" />
+        <MetricGauge label="CPU" value={cpu} icon={Cpu} color="#00B9F1" />
         <MetricGauge label="Memory" value={mem} icon={MemoryStick} color="#ebcb8b" />
         <MetricGauge label="Disk" value={disk} icon={HardDrive} color="#a3be8c" />
 
@@ -182,9 +257,110 @@ export default function ServerCard({ server, metrics, alerts, onFetchHistory, me
       {/* Expanded details */}
       {expanded && (
         <div className="border-t border-dark-700/50 p-4 space-y-4 animate-slide-up">
-          <h4 className="text-xs font-medium text-gray-400 uppercase tracking-wider">
-            Metric History
-          </h4>
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-medium text-gray-400 uppercase tracking-wider">
+              Metric History
+            </h4>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleTestConnection}
+                disabled={testing}
+                className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-medium text-info/70 hover:text-info bg-info/5 hover:bg-info/10 rounded-md transition-all disabled:opacity-50"
+              >
+                {testing ? (
+                  <Loader className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Wifi className="w-3 h-3" />
+                )}
+                {testing ? 'Testing…' : 'Test Connection'}
+              </button>
+              <button
+                onClick={() => onEdit?.(server)}
+                className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-medium text-accent-500/70 hover:text-accent-500 bg-accent-500/5 hover:bg-accent-500/10 rounded-md transition-all"
+              >
+                <PenLine className="w-3 h-3" />
+                Edit
+              </button>
+              {!showDeleteConfirm ? (
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-medium text-danger/70 hover:text-danger bg-danger/5 hover:bg-danger/10 rounded-md transition-all"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Remove
+                </button>
+              ) : (
+                <div className="flex items-center gap-2 bg-danger/10 border border-danger/20 rounded-lg px-2 py-1.5">
+                  <span className="text-[10px] text-danger font-medium whitespace-nowrap">Remove this server?</span>
+                  <button
+                    onClick={handleDelete}
+                    disabled={deleting}
+                    className="px-2 py-0.5 text-[10px] font-medium text-white bg-danger/60 hover:bg-danger rounded transition-all disabled:opacity-50"
+                  >
+                    {deleting ? (
+                      <Loader className="w-3 h-3 animate-spin" />
+                    ) : (
+                      'Yes'
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setShowDeleteConfirm(false)}
+                    disabled={deleting}
+                    className="px-2 py-0.5 text-[10px] font-medium text-gray-400 hover:text-white bg-dark-700 hover:bg-dark-600 rounded transition-all disabled:opacity-50"
+                  >
+                    No
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+          {/* ── Test Connection Result ───────────────────────────── */}
+          {testResult && (
+            <div
+              className={`
+                rounded-lg border p-3 text-xs space-y-1.5 animate-slide-up
+                ${testResult.success
+                  ? 'bg-success/5 border-success/20'
+                  : 'bg-danger/5 border-danger/20'
+                }
+              `}
+            >
+              <div className="flex items-center gap-2">
+                {testResult.success ? (
+                  <CheckCircle className="w-4 h-4 text-success" />
+                ) : (
+                  <XCircle className="w-4 h-4 text-danger" />
+                )}
+                <span className={`font-medium ${testResult.success ? 'text-success' : 'text-danger'}`}>
+                  {testResult.success ? 'Connection Successful' : 'Connection Failed'}
+                </span>
+                <span className="text-gray-500 ml-auto text-[10px]">
+                  {testResult.duration_ms != null ? testResult.duration_ms.toFixed(0) : '—'}ms
+                </span>
+              </div>
+              <p className="text-gray-400 text-[11px]">{testResult.message}</p>
+              {testResult.sys_name && (
+                <p className="text-gray-500 text-[10px]">System: {testResult.sys_name}</p>
+              )}
+              {testResult.uptime_seconds != null && (
+                <p className="text-gray-500 text-[10px]">
+                  Uptime: {testResult.uptime_seconds > 86400
+                    ? `${(testResult.uptime_seconds / 86400).toFixed(1)}d`
+                    : `${(testResult.uptime_seconds / 3600).toFixed(1)}h`}
+                </p>
+              )}
+              {testResult.error && (
+                <p className="text-danger/70 text-[10px] font-mono mt-1">{testResult.error}</p>
+              )}
+              <button
+                onClick={() => setTestResult(null)}
+                className="text-gray-500 hover:text-gray-300 text-[10px] underline mt-1"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 gap-3">
             <MetricSparkline
               label="CPU"
@@ -192,7 +368,7 @@ export default function ServerCard({ server, metrics, alerts, onFetchHistory, me
               measurement="cpu"
               onFetch={onFetchHistory}
               data={metricHistory[`${server.name}:cpu`]}
-              color="#81a1c1"
+              color="#00B9F1"
             />
             <MetricSparkline
               label="Memory"
@@ -235,10 +411,10 @@ function MetricSparkline({ label, server, measurement, onFetch, data, color }) {
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={chartData}>
               <defs>
-                <linearGradient id={`hist-${label}`} x1="0" y1="0" x2="0" y2="1">
+                <lineargradient id={`hist-${label}`} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={color} stopOpacity={0.2} />
                   <stop offset="100%" stopColor={color} stopOpacity={0} />
-                </linearGradient>
+                </lineargradient>
               </defs>
               <Area
                 type="monotone"

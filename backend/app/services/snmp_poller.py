@@ -112,22 +112,50 @@ class SNMPPoller:
     def _poll_server_snmp(self, server: dict) -> Optional[dict[str, Any]]:
         """
         Attempt to poll a server via SNMP.
+        Supports SNMPv2c (community string) and SNMPv3 (username + auth/priv).
         Returns None if SNMP is unavailable (falls back to mock).
         """
         try:
             from easysnmp import Session
 
             host = server.get("host", server.get("id"))
-            community = server.get("snmp_community", settings.snmp_community)
             version = int(server.get("snmp_version", "2c").replace("v", "").replace("c", ""))
 
-            session = Session(
+            # Build common session kwargs
+            session_kwargs = dict(
                 hostname=host,
-                community=community,
                 version=version,
                 timeout=settings.snmp_timeout,
                 retries=settings.snmp_retries,
             )
+
+            if version == 3:
+                # SNMPv3 — use username + auth/priv
+                session_kwargs["security_username"] = server.get("snmp_username", "")
+
+                auth_proto = server.get("snmp_auth_protocol")
+                if auth_proto:
+                    session_kwargs["auth_protocol"] = auth_proto.upper()  # MD5 or SHA
+                    session_kwargs["auth_password"] = server.get("snmp_auth_password", "")
+
+                priv_proto = server.get("snmp_priv_protocol")
+                if priv_proto:
+                    session_kwargs["privacy_protocol"] = priv_proto.upper()  # DES or AES
+                    session_kwargs["privacy_password"] = server.get("snmp_priv_password", "")
+
+                # Set security level based on what's provided
+                if priv_proto:
+                    session_kwargs["security_level"] = "auth_priv"
+                elif auth_proto:
+                    session_kwargs["security_level"] = "auth_no_priv"
+                else:
+                    session_kwargs["security_level"] = "no_auth_no_priv"
+            else:
+                # SNMPv2c — use community string
+                community = server.get("snmp_community", settings.snmp_community)
+                session_kwargs["community"] = community
+
+            session = Session(**session_kwargs)
 
             # System info
             sys_name = session.get(OID["sysName"]).value

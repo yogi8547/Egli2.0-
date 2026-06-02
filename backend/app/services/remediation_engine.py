@@ -319,12 +319,15 @@ class RemediationEngine:
     def get_logs(
         self,
         server: Optional[str] = None,
+        alert_id: Optional[str] = None,
         limit: int = 50,
     ) -> list[dict[str, Any]]:
-        """Get remediation action logs, optionally filtered by server."""
+        """Get remediation action logs, optionally filtered by server or alert_id."""
         logs = self._logs
         if server:
             logs = [l for l in logs if l.server == server]
+        if alert_id:
+            logs = [l for l in logs if l.alert_id == alert_id]
         logs = logs[-limit:]
         return [
             {
@@ -356,6 +359,133 @@ class RemediationEngine:
             "by_metric": by_metric,
             "auto_remediate_enabled": self.auto_remediate,
             "active_cooldowns": len(self._cooldowns),
+        }
+
+    def get_predefined_actions(self, alert: Alert) -> list[dict[str, Any]]:
+        """
+        Get predefined remediation actions applicable to a given alert.
+
+        Returns actions immediately without LLM inference — ordered by
+        risk (low → high) so safe options appear first.
+
+        Args:
+            alert: The alert to find actions for
+
+        Returns:
+            List of action dicts with keys:
+                action, description, risk, command (optional), cooldown_minutes
+        """
+        metric = alert.metric.lower()
+        recipes = REMEDIATION_RECIPES.get(metric, {})
+        if not recipes:
+            # Try partial match: e.g. "cpu_percent" → "cpu"
+            for key in REMEDIATION_RECIPES:
+                if key in metric:
+                    recipes = REMEDIATION_RECIPES[key]
+                    break
+
+        actions = []
+        risk_order = {"low": 0, "medium": 1, "high": 2}
+
+        for action, recipe in recipes.items():
+            if not recipe["condition"](alert):
+                continue
+            actions.append({
+                "action": action.value,
+                "description": recipe["description"],
+                "risk": recipe.get("risk", "low"),
+                "command": recipe.get("command"),
+                "cooldown_minutes": recipe.get("cooldown_minutes", 5),
+            })
+
+        # Sort low-risk first
+        actions.sort(key=lambda a: risk_order.get(a["risk"], 99))
+        return actions
+
+    async def execute_single_action(
+        self,
+        alert: Alert,
+        action_name: str,
+    ) -> dict[str, Any]:
+        """
+        Execute a single predefined action by name.
+
+        This is called when a user clicks "Execute" on a specific action card.
+        Uses the same execution pipeline as evaluate_and_remediate but for
+        a single, user-selected action.
+
+        Args:
+            alert: The alert to act on
+            action_name: The RemediationAction enum value (e.g. "kill_top_cpu_process")
+
+        Returns:
+            Dict with execution result: {
+                action, description, status, output, risk, timestamp
+            }
+        """
+        metric = alert.metric.lower()
+        recipes = REMEDIATION_RECIPES.get(metric, {})
+        if not recipes:
+            # Try partial match
+            for key in REMEDIATION_RECIPES:
+                if key in metric:
+                    recipes = REMEDIATION_RECIPES[key]
+                    break
+
+        # Find the matching action
+        target_action = None
+        target_recipe = None
+        for action, recipe in recipes.items():
+            if action.value == action_name:
+                target_action = action
+                target_recipe = recipe
+                break
+
+        if not target_action:
+            return {
+                "action": action_name,
+                "description": "Unknown action",
+                "status": "failed",
+                "output": f"Action '{action_name}' not found for metric '{metric}'.",
+                "risk": "low",
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+        # Check condition
+        if target_action != RemediationAction.NOTIFY_ONLY and not target_recipe["condition"](alert):
+            return {
+                "action": action_name,
+                "description": target_recipe["description"],
+                "status": "skipped",
+                "output": f"Conditions not met for '{target_recipe['description']}' on this alert.",
+                "risk": target_recipe.get("risk", "low"),
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+        # Execute via the shared pipeline
+        log = await self._execute_action(
+            alert_id=alert.id,
+            server=alert.server,
+            metric=metric,
+            action=target_action,
+            recipe=target_recipe,
+        )
+
+        # Set cooldown
+        cooldown_key = f"{alert.server}:{metric}:{target_action.value}"
+        if log.status != RemediationStatus.SKIPPED:
+            self._cooldowns[cooldown_key] = datetime.utcnow() + timedelta(
+                minutes=target_recipe.get("cooldown_minutes", 10)
+            )
+
+        return {
+            "id": log.id,
+            "action": log.action.value,
+            "description": log.description,
+            "status": log.status.value,
+            "output": log.output,
+            "risk": log.risk,
+            "timestamp": log.timestamp,
         }
 
     def enable_auto_remediate(self, enabled: bool = True) -> None:

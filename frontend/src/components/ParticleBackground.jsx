@@ -136,7 +136,7 @@ export default function ParticleBackground({ intensity = 1 }) {
     return () => {
       window.removeEventListener('resize', resize);
       if (animFrameRef.current) {
-        cancelAnimationFrame(animFrameRef.current);
+        window.cancelAnimationFrame?.(animFrameRef.current);
       }
     };
   }, [intensity, resize]);
