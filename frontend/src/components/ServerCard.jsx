@@ -22,6 +22,7 @@ import {
   Wifi,
   CheckCircle,
   XCircle,
+  Radio,
 } from 'lucide-react';
 import { useAnimatedNumber } from '../hooks/useAnimatedNumber';
 import {
@@ -87,7 +88,7 @@ function MetricGauge({ label, value, icon: Icon, color, unit = '%', trend = [] }
   );
 }
 
-export default function ServerCard({ server, metrics, alerts, onFetchHistory, metricHistory, onDelete, onEdit }) {
+export default function ServerCard({ server, metrics, alerts, customChecks = [], onFetchHistory, metricHistory, onDelete, onEdit }) {
   const [expanded, setExpanded] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -252,6 +253,67 @@ export default function ServerCard({ server, metrics, alerts, onFetchHistory, me
             </span>
           </div>
         </div>
+
+        {/* Custom service checks */}
+        {customChecks.length > 0 && (
+          <div className="pt-2 border-t border-dark-700/30 mt-2">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Radio className="w-3 h-3 text-accent-500" />
+              <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">Services</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {customChecks.map((check) => {
+                const ckStatusColor =
+                  check.status === 'online' ? 'border-success/40 bg-success/10 text-success' :
+                  check.status === 'offline' ? 'border-danger/40 bg-danger/10 text-danger' :
+                  check.status === 'degraded' ? 'border-warning/40 bg-warning/10 text-warning' :
+                  'border-gray-600/40 bg-dark-800/50 text-gray-500';
+
+                const ckDotColor =
+                  check.status === 'online' ? 'bg-success' :
+                  check.status === 'offline' ? 'bg-danger' :
+                  check.status === 'degraded' ? 'bg-warning' :
+                  'bg-gray-500';
+
+                return (
+                  <div
+                    key={check.name}
+                    className={`group relative inline-flex items-center gap-1.5 px-2 py-1 rounded-md border text-[10px] font-medium transition-all duration-200 hover:scale-105 ${ckStatusColor}`}
+                    title={`${check.check_type.toUpperCase()} · ${check.message || check.name}`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${ckDotColor} shrink-0`} />
+                    <span className="truncate max-w-[80px]">{check.name}</span>
+                    {check.value != null && check.check_type === 'tcp_port' && (
+                      <span className="text-[8px] opacity-60 font-mono">:{check.value.toFixed(0)}</span>
+                    )}
+                    {check.check_type === 'http' && (
+                      <span className={`text-[8px] font-bold font-mono ${check.success ? 'text-success/70' : 'text-danger/70'}`}>
+                        {check.value?.toFixed(0) || '---'}
+                      </span>
+                    )}
+                    {/* Hover tooltip */}
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-48 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-20">
+                      <div className="bg-dark-800 border border-dark-600 rounded-lg p-2 shadow-xl">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className={`w-1.5 h-1.5 rounded-full ${ckDotColor}`} />
+                          <span className="text-[10px] font-semibold text-white capitalize">{check.name}</span>
+                          <span className="text-[8px] text-gray-500 font-mono ml-auto">
+                            {check.response_time_ms?.toFixed(0) || '—'}ms
+                          </span>
+                        </div>
+                        <p className="text-[9px] text-gray-400 leading-relaxed">{check.message || 'No details'}</p>
+                        <div className="flex items-center gap-2 mt-1 text-[8px] text-gray-600">
+                          <span className="uppercase">{check.check_type}</span>
+                          {check.error && <span className="text-danger/60 truncate">{check.error}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Expanded details */}

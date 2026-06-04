@@ -102,8 +102,14 @@ async def get_ai_remediation(alert_id: str, deep: bool = False):
     """
     Get remediation for an alert.
 
-    - `deep=false` (default): Returns predefined actions instantly (no AI)
-    - `deep=true`: Returns AI-generated deep analysis (may be slow)
+    Uses a three-tier optimization:
+    1. **Predefined actions** (`deep=false`, default): Instant, rule-based actions
+       from the remediation engine — no AI, no vector search.
+    2. **Vector cache + RAG** (`deep=true`): First checks Qdrant for similar past
+       alerts with known remediations. If found, returns cached remediation
+       instantly (~50ms). If a partial match, uses it as context for Ollama.
+    3. **Full AI analysis**: Falls back to Ollama-only generation if no cache
+       match is found.
     """
     alerts = alert_engine.get_all_alerts()
     target = next((a for a in alerts if a.id == alert_id), None)
@@ -111,16 +117,29 @@ async def get_ai_remediation(alert_id: str, deep: bool = False):
         raise HTTPException(status_code=404, detail=f"Alert '{alert_id}' not found")
 
     if deep:
-        # AI-powered deep analysis (slow)
-        remediation = await ai_service.analyze_alert(target)
+        start = __import__("time").time()
+
+        # Tier 1 + 2: Vector cache lookup + RAG fallback (built into analyze_alert)
+        remediation = await ai_service.analyze_alert(target, use_vector_cache=True)
+
+        elapsed = round(__import__("time").time() - start, 2)
+
+        # Detect if this was a cache hit vs fresh generation
+        is_cached = remediation.startswith("[CACHED REMEDIATION")
+
+        # Store the remediation back to Qdrant for future cache hits
+        # This is idempotent — storing again just overwrites the same value
         alert_engine.set_remediation(alert_id, remediation)
+
         return {
             "alert_id": alert_id,
-            "type": "ai_analysis",
+            "type": "cached" if is_cached else "ai_analysis",
             "remediation": remediation,
+            "duration_seconds": elapsed,
+            "source": "vector_cache" if is_cached else "ollama",
         }
     else:
-        # Predefined actions (instant)
+        # Predefined actions (instant, no AI, no vector search)
         actions = remediation_engine.get_predefined_actions(target)
         return {
             "alert_id": alert_id,

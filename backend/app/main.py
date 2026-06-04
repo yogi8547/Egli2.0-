@@ -10,6 +10,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -19,10 +20,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
 
-from app.api import ai, alerts, metrics, servers, ws, remediation
+from app.api import ai, alerts, custom_checks, metrics, remediation, servers, vector_search, ws
 from app.config import settings
 from app.database import db
 from app.models.schemas import HealthResponse
+from app.services.vector_store import vector_store
 
 
 # ── Application Lifecycle ─────────────────────────────────────────────────
@@ -45,6 +47,22 @@ async def lifespan(app: FastAPI):
     if settings.seed_mock_data:
         servers.seed_mock_servers()
         logger.info("Seeded {} mock servers", settings.mock_server_count)
+
+    # Wire up servers dict reference for WebSocket status change detection
+    # (avoids circular import between ws.py and servers.py)
+    ws.manager.set_servers_ref(servers.get_servers_dict())
+    logger.info("WebSocket manager linked to servers dict")
+
+    # Re-index existing alerts into Qdrant on startup (best-effort)
+    if settings.qdrant_reindex_on_start:
+        try:
+            from app.services.alert_engine import alert_engine as startup_alert_engine
+            existing = startup_alert_engine.get_all_alerts()
+            if existing:
+                alert_dicts = [a.model_dump() for a in existing]
+                asyncio.create_task(vector_store.reindex_alerts(alert_dicts))
+        except Exception as exc:
+            logger.warning("Startup vector reindex skipped: {}", exc)
 
     app.state.start_time = time.time()
     yield
@@ -111,6 +129,12 @@ app.include_router(ai.router)
 # Self-healing / intelligence routers
 app.include_router(remediation.router)
 
+# Custom service checks
+app.include_router(custom_checks.router)
+
+# Vector search / Qdrant
+app.include_router(vector_search.router)
+
 # WebSocket router (no prefix)
 app.include_router(ws.router)
 
@@ -128,12 +152,16 @@ async def health_check():
     influx_ok = db.is_connected() if hasattr(db, 'is_connected') else False
     ollama_ok = ai_service.is_available()
 
+    # AI remediation cache performance stats
+    cache_stats = ai_service.get_cache_stats()
+
     return HealthResponse(
         status="ok",
         version="1.0.0",
         uptime_seconds=uptime,
         influxdb_connected=influx_ok,
         ollama_connected=ollama_ok,
+        vector_cache_stats=cache_stats,
     )
 
 

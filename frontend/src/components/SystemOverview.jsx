@@ -29,6 +29,8 @@ import {
   ArrowRight,
   Database,
   Terminal,
+  BrainCircuit,
+  ZapOff,
 } from 'lucide-react';
 import QuickActionGrid from './QuickActionGrid';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
@@ -478,7 +480,7 @@ function HealthHeatmap({ servers, metrics, alerts }) {
 
 // ── Main Component ──────────────────────────────────────────────────────
 
-export default function SystemOverview({ overview, servers, metrics, alerts, onViewChange, loading = false }) {
+export default function SystemOverview({ overview, servers, metrics, alerts, customChecks = [], cacheStats = null, cacheStatsLoading = false, onRefreshCache, onViewChange, loading = false }) {
   // ── Chart data state ────────────────────────────────────────────────
   const [cpuTrend, setCpuTrend] = useState([]);
   const [memTrend, setMemTrend] = useState([]);
@@ -654,6 +656,16 @@ export default function SystemOverview({ overview, servers, metrics, alerts, onV
         metrics={metrics}
         alerts={alerts}
       />
+
+      {/* Custom Service Checks Status */}
+      <ServiceCheckStatus
+        customChecks={customChecks}
+        servers={servers}
+        onViewChange={onViewChange}
+      />
+
+      {/* AI Cache Performance */}
+      <CachePerformance cacheStats={cacheStats} loading={cacheStatsLoading} onRefresh={onRefreshCache} />
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -1128,6 +1140,441 @@ function PodStatus({ servers, metrics, alerts }) {
     </div>
   );
 }
+
+// ── Service Check Status ───────────────────────────────────────────────
+
+/**
+ * Shows aggregate custom service check health (TCP port, HTTP checks)
+ * with per-server and per-service breakdown.
+ */
+function ServiceCheckStatus({ customChecks = [], servers = [], onViewChange }) {
+  // Compute aggregate stats
+  const stats = useMemo(() => {
+    const total = customChecks.length;
+    const online = customChecks.filter((c) => c.status === 'online').length;
+    const offline = customChecks.filter((c) => c.status === 'offline').length;
+    const degraded = customChecks.filter((c) => c.status === 'degraded').length;
+    const unknown = customChecks.filter((c) => c.status === 'unknown').length;
+    const pct = total > 0 ? Math.round((online / total) * 100) : 0;
+
+    // Group checks by server
+    const byServer = {};
+    customChecks.forEach((c) => {
+      const key = c.server || 'unknown';
+      if (!byServer[key]) byServer[key] = [];
+      byServer[key].push(c);
+    });
+
+    // Find the server name for each check server id
+    const serverNames = {};
+    servers.forEach((s) => {
+      serverNames[s.id] = s.name;
+      serverNames[s.name] = s.name;
+    });
+
+    return { total, online, offline, degraded, unknown, pct, byServer, serverNames };
+  }, [customChecks, servers]);
+
+  const hasChecks = stats.total > 0;
+  const allHealthy = hasChecks && stats.offline === 0 && stats.degraded === 0;
+  const someIssues = hasChecks && (stats.offline > 0 || stats.degraded > 0);
+
+  if (!hasChecks) return null;
+
+  return (
+    <div className="glass-card p-5">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Radio className={`w-4 h-4 ${allHealthy ? 'text-success' : someIssues ? 'text-warning' : 'text-accent-500'}`} />
+          <h3 className="text-sm font-medium text-gray-200">Service Checks</h3>
+          <span className="text-[10px] text-gray-500">
+            ({stats.total} check{stats.total !== 1 ? 's' : ''})
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          {/* Summary pills */}
+          {stats.online > 0 && (
+            <span className="flex items-center gap-1 text-[10px] text-success font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-success" />
+              {stats.online} online
+            </span>
+          )}
+          {stats.degraded > 0 && (
+            <span className="flex items-center gap-1 text-[10px] text-warning font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-warning" />
+              {stats.degraded} degraded
+            </span>
+          )}
+          {stats.offline > 0 && (
+            <span className="flex items-center gap-1 text-[10px] text-danger font-medium">
+              <span className="w-1.5 h-1.5 rounded-full bg-danger" />
+              {stats.offline} offline
+            </span>
+          )}
+          <button
+            onClick={() => onViewChange?.('servers')}
+            className="text-[10px] text-accent-500 hover:text-accent-400 transition-colors"
+          >
+            View Servers →
+          </button>
+        </div>
+      </div>
+
+      {/* Health ring + breakdown */}
+      <div className="flex items-center gap-8">
+        {/* Circular progress */}
+        <div className="relative w-20 h-20 shrink-0">
+          <svg className="w-full h-full -rotate-90" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="42" fill="none" stroke="var(--dark-700)" strokeWidth="8" />
+            <circle
+              cx="50" cy="50" r="42"
+              fill="none"
+              stroke={allHealthy ? '#a3be8c' : someIssues ? '#ebcb8b' : '#bf616a'}
+              strokeWidth="8"
+              strokeLinecap="round"
+              strokeDasharray={`${2 * Math.PI * 42}`}
+              strokeDashoffset={`${2 * Math.PI * 42 * (1 - stats.pct / 100)}`}
+              className="transition-all duration-1000 ease-out"
+            />
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <span className="text-lg font-bold font-mono" style={{
+              color: allHealthy ? '#a3be8c' : someIssues ? '#ebcb8b' : '#bf616a'
+            }}>
+              {stats.pct}%
+            </span>
+            <span className="text-[8px] text-gray-500">healthy</span>
+          </div>
+        </div>
+
+        {/* Status breakdown bars */}
+        <div className="flex-1 space-y-2">
+          <div className="flex items-center gap-3">
+            <span className="w-2 h-2 rounded-full bg-success shrink-0" />
+            <span className="text-xs text-gray-400 w-20">Online</span>
+            <div className="flex-1 h-2 bg-dark-700 rounded-full overflow-hidden">
+              <div className="h-full bg-success rounded-full transition-all duration-500" style={{ width: `${stats.total > 0 ? (stats.online / stats.total) * 100 : 0}%` }} />
+            </div>
+            <span className="text-xs font-mono text-gray-300 w-8 text-right">{stats.online}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="w-2 h-2 rounded-full bg-warning shrink-0" />
+            <span className="text-xs text-gray-400 w-20">Degraded</span>
+            <div className="flex-1 h-2 bg-dark-700 rounded-full overflow-hidden">
+              <div className="h-full bg-warning rounded-full transition-all duration-500" style={{ width: `${stats.total > 0 ? (stats.degraded / stats.total) * 100 : 0}%` }} />
+            </div>
+            <span className="text-xs font-mono text-gray-300 w-8 text-right">{stats.degraded}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="w-2 h-2 rounded-full bg-danger shrink-0" />
+            <span className="text-xs text-gray-400 w-20">Offline</span>
+            <div className="flex-1 h-2 bg-dark-700 rounded-full overflow-hidden">
+              <div className="h-full bg-danger rounded-full transition-all duration-500" style={{ width: `${stats.total > 0 ? (stats.offline / stats.total) * 100 : 0}%` }} />
+            </div>
+            <span className="text-xs font-mono text-gray-300 w-8 text-right">{stats.offline}</span>
+          </div>
+          {stats.unknown > 0 && (
+            <div className="flex items-center gap-3">
+              <span className="w-2 h-2 rounded-full bg-gray-500 shrink-0" />
+              <span className="text-xs text-gray-400 w-20">Unknown</span>
+              <div className="flex-1 h-2 bg-dark-700 rounded-full overflow-hidden">
+                <div className="h-full bg-gray-500 rounded-full transition-all duration-500" style={{ width: `${(stats.unknown / stats.total) * 100}%` }} />
+              </div>
+              <span className="text-xs font-mono text-gray-300 w-8 text-right">{stats.unknown}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Service list by server */}
+        <div className="shrink-0 max-w-[240px]">
+          {Object.entries(stats.byServer).slice(0, 4).map(([serverId, checks]) => {
+            const displayName = stats.serverNames[serverId] || serverId;
+            const offlineCount = checks.filter((c) => c.status === 'offline').length;
+            const onlineCount = checks.filter((c) => c.status === 'online').length;
+
+            return (
+              <div key={serverId} className="flex items-center gap-2 mb-1.5 last:mb-0">
+                <span className="text-[10px] text-gray-400 truncate max-w-[80px]">{displayName}</span>
+                <div className="flex gap-0.5">
+                  {checks.slice(0, 5).map((c) => {
+                    const dotColor =
+                      c.status === 'online' ? 'bg-success' :
+                      c.status === 'offline' ? 'bg-danger' :
+                      c.status === 'degraded' ? 'bg-warning' :
+                      'bg-gray-500';
+                    return (
+                      <span
+                        key={c.name}
+                        className={`w-2 h-2 rounded-full ${dotColor} shrink-0`}
+                        title={`${c.name}: ${c.status}`}
+                      />
+                    );
+                  })}
+                  {checks.length > 5 && (
+                    <span className="text-[8px] text-gray-600 ml-0.5">+{checks.length - 5}</span>
+                  )}
+                </div>
+                {offlineCount > 0 && (
+                  <span className="text-[9px] text-danger font-medium ml-auto">{offlineCount}!</span>
+                )}
+              </div>
+            );
+          })}
+          {Object.keys(stats.byServer).length > 4 && (
+            <p className="text-[9px] text-gray-600 mt-1">
+              +{Object.keys(stats.byServer).length - 4} more servers
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ── Cache Performance Skeleton ───────────────────────────────────────────
+
+/**
+ * Skeleton placeholder shown while cache stats are loading.
+ */
+function CachePerformanceSkeleton() {
+  return (
+    <div className="glass-card p-5 animate-pulse">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <div className="w-5 h-5 rounded bg-dark-600" />
+          <div className="h-4 w-36 bg-dark-600 rounded" />
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3.5 h-3.5 rounded bg-dark-600" />
+          <div className="h-4 w-28 bg-dark-600 rounded" />
+        </div>
+      </div>
+      <div className="flex items-center gap-6">
+        <div className="flex-1 space-y-3">
+          {[70, 45, 20].map((w, i) => (
+            <div key={i}>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2 h-2 rounded-full bg-dark-600" />
+                  <div className="h-3 w-28 bg-dark-600 rounded" />
+                </div>
+                <div className="h-3 w-16 bg-dark-600 rounded" />
+              </div>
+              <div className="h-2.5 bg-dark-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-dark-600 rounded-full"
+                  style={{ width: `${w}%` }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="shrink-0">
+          <div className="flex flex-col items-center p-4 rounded-lg bg-dark-800/50 border border-dark-700/30 min-w-[120px]">
+            <div className="w-5 h-5 rounded bg-dark-600 mb-1" />
+            <div className="h-7 w-16 bg-dark-600 rounded mb-1" />
+            <div className="h-3 w-20 bg-dark-600/60 rounded" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ── AI Cache Performance ────────────────────────────────────────────────
+
+/**
+ * Shows cache hit rate statistics for the RAG remediation cache.
+ * Displays how many Ollama calls were avoided, time saved, and
+ * distribution across cache tiers.
+ */
+function CachePerformance({ cacheStats, loading = false, onRefresh }) {
+  // Show skeleton on initial load (no data yet + still loading)
+  if (loading && !cacheStats) {
+    return <CachePerformanceSkeleton />;
+  }
+
+  // Show empty state when no requests have been made (and not loading)
+  if (!cacheStats || cacheStats.total_requests === 0) {
+    return (
+      <div className="glass-card p-5">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <BrainCircuit className="w-4 h-4 text-accent-500" />
+            <h3 className="text-sm font-medium text-gray-200">AI Cache Performance</h3>
+          </div>
+          <button
+            onClick={onRefresh}
+            className="p-1 rounded text-gray-500 hover:text-accent-500 hover:bg-dark-700 transition-all"
+            title="Refresh cache stats"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <div className="flex items-center justify-center py-6 text-gray-500 text-xs">
+          <Zap className="w-4 h-4 mr-2 text-gray-600" />
+          No remediation requests yet — stats appear after the first deep analysis
+        </div>
+      </div>
+    );
+  }
+
+  const {
+    total_requests,
+    cache_hits,
+    rag_fallbacks,
+    full_analysis,
+    cache_hit_rate,
+    rag_rate,
+    full_rate,
+    avg_duration_cache_hit,
+    avg_duration_rag,
+    avg_duration_full,
+    ollama_savings_seconds,
+  } = cacheStats;
+
+  // Determine overall health color
+  const healthColor = cache_hit_rate >= 50 ? 'text-success' : cache_hit_rate >= 25 ? 'text-warning' : 'text-danger';
+  const barColor = cache_hit_rate >= 50 ? 'bg-success' : cache_hit_rate >= 25 ? 'bg-warning' : 'bg-danger';
+
+  // Format savings
+  const savingsMin = Math.floor(ollama_savings_seconds / 60);
+  const savingsSec = Math.round(ollama_savings_seconds % 60);
+  const savingsStr = savingsMin > 0 ? `${savingsMin}m ${savingsSec}s` : `${savingsSec}s`;
+
+  return (
+    <div className="glass-card p-5">
+      {/* Header */}        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          {loading ? (
+            <div className="w-4 h-4 border-2 border-accent-500/40 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <BrainCircuit className="w-4 h-4 text-accent-500" />
+          )}
+          <h3 className="text-sm font-medium text-gray-200">AI Cache Performance</h3>
+          <span className="text-[10px] text-gray-500">
+            ({total_requests} request{total_requests !== 1 ? 's' : ''})
+          </span>
+          <button
+            onClick={onRefresh}
+            className="p-1 rounded text-gray-500 hover:text-accent-500 hover:bg-dark-700 transition-all"
+            title="Refresh cache stats"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+        <div className="flex items-center gap-3">
+          {/* Cache hit rate pill */}
+          <span className={`flex items-center gap-1 text-[10px] font-bold ${healthColor}`}>
+            <span className={`w-2 h-2 rounded-full ${cache_hit_rate >= 50 ? 'bg-success' : cache_hit_rate >= 25 ? 'bg-warning' : 'bg-danger'}`} />
+            {cache_hit_rate}% cache hit rate
+          </span>
+          {ollama_savings_seconds > 0 && (
+            <span className="text-[10px] text-success font-medium">
+              ~{savingsStr} saved
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-6">
+        {/* Main cache hit rate bar */}
+        <div className="flex-1">
+          {/* Distribution bars */}
+          <div className="space-y-2.5">
+            {/* Cache hit bar */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-success shrink-0" />
+                  <span className="text-xs text-gray-400">Cache Hit (instant)</span>
+                </div>
+                <span className="text-xs font-mono text-success font-medium">{cache_hits} ({cache_hit_rate}%)</span>
+              </div>
+              <div className="h-2.5 bg-dark-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-success rounded-full transition-all duration-700"
+                  style={{ width: `${Math.max(cache_hit_rate, 2)}%` }}
+                />
+              </div>
+              {cache_hits > 0 && (
+                <p className="text-[9px] text-gray-600 mt-0.5">
+                  Avg {avg_duration_cache_hit}s · Instant from Qdrant
+                </p>
+              )}
+            </div>
+
+            {/* RAG fallback bar */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-warning shrink-0" />
+                  <span className="text-xs text-gray-400">RAG Fallback (40% faster)</span>
+                </div>
+                <span className="text-xs font-mono text-warning font-medium">{rag_fallbacks} ({rag_rate}%)</span>
+              </div>
+              <div className="h-2.5 bg-dark-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-warning rounded-full transition-all duration-700"
+                  style={{ width: `${Math.max(rag_rate, 2)}%` }}
+                />
+              </div>
+              {rag_fallbacks > 0 && (
+                <p className="text-[9px] text-gray-600 mt-0.5">
+                  Avg {avg_duration_rag}s · Past remediation as context
+                </p>
+              )}
+            </div>
+
+            {/* Full analysis bar */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-danger shrink-0" />
+                  <span className="text-xs text-gray-400">Full Analysis (Ollama)</span>
+                </div>
+                <span className="text-xs font-mono text-danger font-medium">{full_analysis} ({full_rate}%)</span>
+              </div>
+              <div className="h-2.5 bg-dark-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-danger rounded-full transition-all duration-700"
+                  style={{ width: `${Math.max(full_rate, 2)}%` }}
+                />
+              </div>
+              {full_analysis > 0 && (
+                <p className="text-[9px] text-gray-600 mt-0.5">
+                  Avg {avg_duration_full}s · Full generation from scratch
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Savings summary */}
+        <div className="shrink-0 text-right">
+          <div className="flex flex-col items-center p-4 rounded-lg bg-success/10 border border-success/20 min-w-[120px]">
+            <BrainCircuit className="w-5 h-5 text-success mb-1" />
+            <span className="text-2xl font-bold font-mono text-success">{cache_hit_rate}%</span>
+            <span className="text-[9px] text-success/70">cache hit rate</span>
+          </div>
+          {ollama_savings_seconds > 0 && (
+            <div className="mt-2 flex items-center justify-end gap-1 text-[9px] text-gray-500">
+              <Zap className="w-3 h-3 text-success" />
+              <span>~{savingsStr} Ollama time saved</span>
+            </div>
+          )}
+          <div className="mt-1 text-[9px] text-gray-600">
+            {cache_hits} cache + {rag_fallbacks} RAG vs {full_analysis} full
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 // ── Service Metrics Table ───────────────────────────────────────────────
 

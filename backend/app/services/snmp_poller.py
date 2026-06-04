@@ -65,6 +65,7 @@ class SNMPPoller:
         self._previous_rx: dict[str, float] = {}
         self._previous_tx: dict[str, float] = {}
         self._previous_time: dict[str, float] = {}
+        self._last_poll_ok: dict[str, bool] = {}  # Track real SNMP success per server
 
     def register_server(self, server_info: dict) -> None:
         """Add a server to the polling list."""
@@ -220,7 +221,11 @@ class SNMPPoller:
 
         for server in self._servers:
             snapshot = self._poll_server_snmp(server)
-            if snapshot is None:
+            server_id = server.get("id", server.get("name", ""))
+            if snapshot is not None:
+                self._last_poll_ok[server_id] = True
+            else:
+                self._last_poll_ok[server_id] = False
                 snapshot = self._generate_mock_snapshot(server)
 
             snapshots.append(snapshot)
@@ -234,6 +239,12 @@ class SNMPPoller:
 
         logger.info("Polled {} servers — {} snapshots collected", len(self._servers), len(snapshots))
         return snapshots
+
+    def get_poll_status(self) -> dict[str, bool]:
+        """Return which servers were last successfully polled via real SNMP.
+        Returns dict mapping server_id -> True (real SNMP) or False (mock fallback).
+        """
+        return dict(self._last_poll_ok)
 
     def poll_server(self, server_id: str) -> Optional[dict[str, Any]]:
         """Poll a single server by its ID."""

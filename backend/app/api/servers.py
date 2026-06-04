@@ -15,11 +15,13 @@ from typing import Optional
 import time as time_module
 
 from fastapi import APIRouter, HTTPException
+from loguru import logger
 
 from app.models.schemas import (
     BulkImportRequest,
     BulkImportResponse,
     BulkImportResult,
+    CustomCheckConfig,
     ServerCreate,
     ServerListResponse,
     ServerResponse,
@@ -28,6 +30,7 @@ from app.models.schemas import (
     TestConnectionResult,
 )
 from app.services.snmp_poller import poller
+from app.api.ws import manager as ws_manager
 
 router = APIRouter(prefix="/api/servers", tags=["servers"])
 
@@ -62,9 +65,17 @@ async def register_server(data: ServerCreate):
         snmp_priv_password=data.snmp_priv_password,
         status=ServerStatus.UNKNOWN,
         tags=data.tags,
+        custom_checks=data.custom_checks,
     )
     _servers[data.id] = server
     poller.register_server(data.model_dump())
+
+    # Notify connected WebSocket clients (best-effort)
+    try:
+        await ws_manager.broadcast_server_event("added", server.model_dump())
+    except Exception as exc:
+        logger.warning("WS broadcast failed on server add: {}", exc)
+
     return server
 
 
@@ -100,6 +111,12 @@ async def update_server(server_id: str, data: ServerUpdate):
     poller.remove_server(server_id)
     poller.register_server(existing.model_dump())
 
+    # Notify connected WebSocket clients (best-effort)
+    try:
+        await ws_manager.broadcast_server_event("updated", existing.model_dump())
+    except Exception as exc:
+        logger.warning("WS broadcast failed on server update: {}", exc)
+
     return existing
 
 
@@ -108,8 +125,14 @@ async def delete_server(server_id: str):
     """Remove a server from monitoring."""
     if server_id not in _servers:
         raise HTTPException(status_code=404, detail=f"Server '{server_id}' not found")
-    del _servers[server_id]
+    removed = _servers.pop(server_id)
     poller.remove_server(server_id)
+
+    # Notify connected WebSocket clients (best-effort)
+    try:
+        await ws_manager.broadcast_server_event("deleted", {"id": server_id, "name": removed.name})
+    except Exception as exc:
+        logger.warning("WS broadcast failed on server delete: {}", exc)
 
 
 @router.post("/{server_id}/test-connection", response_model=TestConnectionResult)
@@ -214,6 +237,7 @@ async def bulk_import_servers(data: BulkImportRequest):
                 snmp_priv_password=srv.snmp_priv_password,
                 status=ServerStatus.UNKNOWN,
                 tags=srv.tags,
+                custom_checks=srv.custom_checks,
             )
             _servers[srv.id] = server
             poller.register_server(srv.model_dump())
@@ -258,6 +282,7 @@ async def export_servers():
             snmp_auth_protocol=srv.snmp_auth_protocol,
             snmp_priv_protocol=srv.snmp_priv_protocol,
             tags=srv.tags,
+            custom_checks=srv.custom_checks,
             # Passwords excluded for security
         ))
     return exported
@@ -268,11 +293,43 @@ async def export_servers():
 from datetime import datetime
 
 MOCK_SERVERS = [
-    ServerCreate(id="server-01", name="Web Server 01", host="192.168.1.101"),
-    ServerCreate(id="server-02", name="Web Server 02", host="192.168.1.102"),
-    ServerCreate(id="server-03", name="Database Server", host="192.168.1.201"),
-    ServerCreate(id="server-04", name="Cache Server", host="192.168.1.202"),
-    ServerCreate(id="server-05", name="Monitoring Node", host="192.168.1.10"),
+    ServerCreate(
+        id="server-01", name="Web Server 01", host="192.168.1.101",
+        custom_checks=[
+            CustomCheckConfig(name="tomcat", check_type="tcp_port", port=8080, tags={"service": "tomcat"}),
+            CustomCheckConfig(name="nginx", check_type="tcp_port", port=80, tags={"service": "nginx"}),
+            CustomCheckConfig(name="app-health", check_type="http", url="http://192.168.1.101:8080/health", expect_status=200, tags={"service": "tomcat"}),
+        ],
+    ),
+    ServerCreate(
+        id="server-02", name="Web Server 02", host="192.168.1.102",
+        custom_checks=[
+            CustomCheckConfig(name="tomcat", check_type="tcp_port", port=8080, tags={"service": "tomcat"}),
+            CustomCheckConfig(name="nginx", check_type="tcp_port", port=80, tags={"service": "nginx"}),
+            CustomCheckConfig(name="app-health", check_type="http", url="http://192.168.1.102:8080/health", expect_status=200, tags={"service": "tomcat"}),
+        ],
+    ),
+    ServerCreate(
+        id="server-03", name="Database Server", host="192.168.1.201",
+        custom_checks=[
+            CustomCheckConfig(name="mysql", check_type="tcp_port", port=3306, tags={"service": "mysql"}),
+            CustomCheckConfig(name="db-health", check_type="http", url="http://192.168.1.201:8080/healthz", expect_status=200, tags={"service": "mysql"}),
+        ],
+    ),
+    ServerCreate(
+        id="server-04", name="Cache Server", host="192.168.1.202",
+        custom_checks=[
+            CustomCheckConfig(name="redis", check_type="tcp_port", port=6379, tags={"service": "redis"}),
+        ],
+    ),
+    ServerCreate(
+        id="server-05", name="Monitoring Node", host="192.168.1.10",
+        custom_checks=[
+            CustomCheckConfig(name="grafana", check_type="tcp_port", port=3000, tags={"service": "grafana"}),
+            CustomCheckConfig(name="opensip", check_type="tcp_port", port=5060, tags={"service": "opensip"}),
+            CustomCheckConfig(name="grafana-health", check_type="http", url="http://192.168.1.10:3000/api/health", expect_status=200, tags={"service": "grafana"}),
+        ],
+    ),
 ]
 
 def seed_mock_servers():
@@ -293,6 +350,7 @@ def seed_mock_servers():
                 snmp_priv_password=srv.snmp_priv_password,
                 status=ServerStatus.ONLINE,
                 tags={"environment": "development", "type": srv.id.split("-")[0]},
+                custom_checks=srv.custom_checks,
                 created_at=datetime.utcnow(),
             )
             _servers[srv.id] = server

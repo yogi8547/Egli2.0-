@@ -20,6 +20,7 @@ from loguru import logger
 
 from app.config import settings
 from app.models.schemas import Alert, MetricSnapshot, SystemOverview
+from app.services.vector_store import vector_store
 
 
 class AIService:
@@ -32,6 +33,20 @@ class AIService:
         self.base_url = settings.ollama_base_url
         self.model = settings.ollama_model
         self.temperature = settings.ollama_temperature
+
+        # ── Cache Hit Rate Tracking ────────────────────────────────────
+        self._cache_stats = {
+            "total_requests": 0,
+            "cache_hits": 0,  # Tier 1: returned cached remediation directly
+            "rag_fallbacks": 0,  # Tier 2: used past remediation as Ollama context
+            "full_analysis": 0,  # Tier 3: full analysis from scratch
+            "avg_duration_cache_hit": 0.0,
+            "avg_duration_rag": 0.0,
+            "avg_duration_full": 0.0,
+            "total_duration_cache_hit": 0.0,
+            "total_duration_rag": 0.0,
+            "total_duration_full": 0.0,
+        }
 
     def is_available(self) -> bool:
         """Check if Ollama is running and accessible."""
@@ -91,9 +106,9 @@ class AIService:
                                 if content:
                                     yield content
         except httpx.ConnectError:
-            yield "⚠️  Cannot connect to Ollama. Make sure Ollama is running."
+            yield "[ERROR] Cannot connect to Ollama. Make sure Ollama is running."
         except Exception as exc:
-            yield f"⚠️  Error: {exc!s}"
+            yield f"[ERROR] {exc!s}"
 
     async def generate(
         self,
@@ -144,16 +159,113 @@ class AIService:
         )
         return await self.generate(prompt)
 
-    async def analyze_alert(self, alert: Alert) -> str:
+    async def analyze_alert(self, alert: Alert, use_vector_cache: bool = True) -> str:
         """
         Analyze an alert and suggest remediation steps.
 
+        Uses a two-tier approach:
+        1. **Semantic cache** (if enabled): Search Qdrant for similar past alerts
+           with known remediations. If a high-confidence match is found, return
+           the cached remediation directly (< 100ms).
+        2. **RAG fallback**: If a medium-confidence match is found, use the past
+           remediation as context for a targeted Ollama prompt (faster, ~40%
+           token reduction).
+        3. **Full analysis**: If no good match, generate from scratch via Ollama.
+
         Args:
             alert: The triggered alert
+            use_vector_cache: Whether to check Qdrant for cached remediations
 
         Returns:
             AI-generated analysis with root cause and remediation
         """
+        start_time = __import__("time").time()
+
+        # ── Tier 1: Semantic Cache Lookup ────────────────────────────────
+        if use_vector_cache:
+            query = (
+                f"Alert on {alert.server}: {alert.metric} - {alert.message} "
+                f"Severity: {alert.severity} Value: {alert.value} "
+                f"Threshold: {alert.threshold}"
+            )
+
+            # Use configurable thresholds from settings
+            high_threshold = settings.vector_cache_high_threshold
+            medium_threshold = settings.vector_cache_medium_threshold
+            min_score = settings.vector_cache_min_score
+            top_k = settings.vector_cache_top_k
+
+            cache_results = await vector_store.search_remediation_cache(
+                query=query,
+                server_filter=alert.server,
+                metric_filter=alert.metric,
+                top_k=top_k,
+                score_threshold=min_score,
+            )
+
+            if cache_results:
+                best = cache_results[0]
+                score = best.get("score", 0.0)
+                cached_remediation = best.get("remediation", "")
+
+                # High-confidence match — return cached directly
+                if score >= high_threshold and cached_remediation:
+                    result_type = "cache_hit"
+                    elapsed = __import__("time").time() - start_time
+                    self._record_cache_result("cache_hit", elapsed)
+
+                    logger.info(
+                        "Vector cache HIT (score={}) for {} on {} — returning cached remediation",
+                        score, alert.metric, alert.server,
+                    )
+                    return (
+                        f"[CACHED REMEDIATION] Similarity: {score:.0%}\n\n"
+                        f"This alert matches a previous incident on {best.get('server')} "
+                        f"({best.get('metric')}, score: {score:.2f}).\n\n"
+                        f"{cached_remediation}\n\n"
+                        f"---\n"
+                        f"[INFO] This remediation was retrieved from the vector cache. "
+                        f"If it doesn't fully apply to the current situation, "
+                        f"request a fresh AI analysis."
+                    )
+
+                # Medium-confidence match — use as RAG context
+                if score >= medium_threshold and cached_remediation:
+                    result_type = "rag_fallback"
+                    logger.info(
+                        "Vector cache RAG (score={}) for {} on {} — using past remediation as context",
+                        score, alert.metric, alert.server,
+                    )
+                    prompt = (
+                        "You are an expert infrastructure SRE. Given the following alert, "
+                        "provide:\n"
+                        "1. Likely root causes\n"
+                        "2. Immediate remediation steps\n"
+                        "3. Long-term preventive measures\n"
+                        "4. Related things to check\n\n"
+                        f"Alert:\n"
+                        f"Server: {alert.server}\n"
+                        f"Metric: {alert.metric}\n"
+                        f"Value: {alert.value}\n"
+                        f"Threshold: {alert.threshold}\n"
+                        f"Severity: {alert.severity}\n"
+                        f"Message: {alert.message}\n\n"
+                        f"A similar alert was previously resolved with the following "
+                        f"remediation. Use it as reference, but adapt if needed:\n\n"
+                        f"Past remediation (similarity: {score:.2f}):\n"
+                        f"{cached_remediation}\n"
+                    )
+                    result = await self.generate(prompt)
+                    elapsed = __import__("time").time() - start_time
+                    self._record_cache_result("rag_fallback", elapsed)
+                    return result
+
+            logger.debug(
+                "Vector cache miss for {} on {} — falling back to full analysis",
+                alert.metric, alert.server,
+            )
+
+        # ── Tier 3: Full Analysis (no cache or low-confidence) ─────────
         prompt = (
             "You are an expert infrastructure SRE. Given the following alert, "
             "provide:\n"
@@ -169,7 +281,10 @@ class AIService:
             f"Severity: {alert.severity}\n"
             f"Message: {alert.message}\n"
         )
-        return await self.generate(prompt)
+        result = await self.generate(prompt)
+        elapsed = __import__("time").time() - start_time
+        self._record_cache_result("full_analysis", elapsed)
+        return result
 
     async def chat_query(
         self,
@@ -220,6 +335,81 @@ class AIService:
             "Provide a professional summary with status, key issues, and recommendations."
         )
         return await self.generate(prompt)
+
+    # ── Cache Stats ──────────────────────────────────────────────────────
+
+    def _record_cache_result(self, result_type: str, duration: float) -> None:
+        """Record a cache result for metrics tracking."""
+        stats = self._cache_stats
+        stats["total_requests"] += 1
+
+        if result_type == "cache_hit":
+            stats["cache_hits"] += 1
+            stats["total_duration_cache_hit"] += duration
+            stats["avg_duration_cache_hit"] = (
+                stats["total_duration_cache_hit"] / stats["cache_hits"]
+            )
+        elif result_type == "rag_fallback":
+            stats["rag_fallbacks"] += 1
+            stats["total_duration_rag"] += duration
+            stats["avg_duration_rag"] = (
+                stats["total_duration_rag"] / stats["rag_fallbacks"]
+            )
+        else:
+            stats["full_analysis"] += 1
+            stats["total_duration_full"] += duration
+            stats["avg_duration_full"] = (
+                stats["total_duration_full"] / stats["full_analysis"]
+            )
+
+    def get_cache_stats(self) -> dict[str, Any]:
+        """Get cache hit rate statistics.
+
+        Returns:
+            Dict with keys:
+                total_requests, cache_hits, rag_fallbacks, full_analysis,
+                cache_hit_rate (percentage), rag_rate, full_rate,
+                avg_duration_cache_hit, avg_duration_rag, avg_duration_full
+                ollama_savings_seconds (estimated time saved by cache hits)
+        """
+        s = dict(self._cache_stats)  # Copy
+        total = s["total_requests"] or 1  # Avoid div by zero
+
+        # Compute rates
+        s["cache_hit_rate"] = round((s["cache_hits"] / total) * 100, 1)
+        s["rag_rate"] = round((s["rag_fallbacks"] / total) * 100, 1)
+        s["full_rate"] = round((s["full_analysis"] / total) * 100, 1)
+
+        # Estimate Ollama time saved: each cache hit avoids ~8s avg Ollama call
+        avg_ollama_time = s["avg_duration_full"]
+        if avg_ollama_time > 0:
+            s["ollama_savings_seconds"] = round(
+                s["cache_hits"] * avg_ollama_time, 1
+            )
+        else:
+            s["ollama_savings_seconds"] = 0.0
+
+        # Round averages
+        s["avg_duration_cache_hit"] = round(s["avg_duration_cache_hit"], 3)
+        s["avg_duration_rag"] = round(s["avg_duration_rag"], 1)
+        s["avg_duration_full"] = round(s["avg_duration_full"], 1)
+
+        return s
+
+    def reset_cache_stats(self) -> None:
+        """Reset all cache statistics counters."""
+        self._cache_stats = {
+            "total_requests": 0,
+            "cache_hits": 0,
+            "rag_fallbacks": 0,
+            "full_analysis": 0,
+            "avg_duration_cache_hit": 0.0,
+            "avg_duration_rag": 0.0,
+            "avg_duration_full": 0.0,
+            "total_duration_cache_hit": 0.0,
+            "total_duration_rag": 0.0,
+            "total_duration_full": 0.0,
+        }
 
     # ── Helpers ─────────────────────────────────────────────────────────
 

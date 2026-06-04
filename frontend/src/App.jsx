@@ -32,8 +32,11 @@ export default function App() {
   const [servers, setServers] = useState([]);
   const [metrics, setMetrics] = useState({});
   const [alerts, setAlerts] = useState([]);
+  const [customChecks, setCustomChecks] = useState([]);
   const [metricHistory, setMetricHistory] = useState({});
   const [overview, setOverview] = useState(null);
+  const [cacheStats, setCacheStats] = useState(null);
+  const [cacheStatsLoading, setCacheStatsLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [pollRemaining, setPollRemaining] = useState(60);
@@ -50,24 +53,51 @@ export default function App() {
     };
   }, []);
 
+  // ── Cache stats refresh (shared: manual + auto) ────────────────────
+  const refreshCacheStats = useCallback(async () => {
+    setCacheStatsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/vectors/cache-stats`);
+      if (res.ok) {
+        const data = await res.json();
+        setCacheStats(data);
+      }
+    } catch {
+      // Silently ignore — cache stats aren't critical
+    } finally {
+      setCacheStatsLoading(false);
+    }
+  }, []);
+
+  // ── Auto-refresh cache stats every 30s ──────────────────────────────
+  useEffect(() => {
+    const interval = setInterval(refreshCacheStats, 30000);
+    return () => clearInterval(interval);
+  }, [refreshCacheStats]);
+
   async function fetchInitialData() {
     try {
-      const [serversRes, overviewRes, alertsRes] = await Promise.all([
+      const [serversRes, overviewRes, alertsRes, cacheRes] = await Promise.all([
         fetch(`${API_BASE}/servers`),
         fetch(`${API_BASE}/overview`),
         fetch(`${API_BASE}/alerts`),
+        fetch(`${API_BASE}/vectors/cache-stats`),
       ]);
 
       const serversData = await serversRes.json();
       const overviewData = await overviewRes.json();
       const alertsData = await alertsRes.json();
+      const cacheData = await cacheRes.json();
 
       setServers(serversData.servers || []);
       setOverview(overviewData);
       setAlerts(alertsData.alerts || []);
+      setCacheStats(cacheData);
+      setCacheStatsLoading(false);
       setLoading(false);
     } catch (err) {
       console.error('Failed to fetch initial data:', err);
+      setCacheStatsLoading(false);
       setLoading(false);
     }
   }
@@ -119,6 +149,10 @@ export default function App() {
         setAlerts(data.alerts);
       }
 
+      if (data.custom_check_results) {
+        setCustomChecks(data.custom_check_results);
+      }
+
       if (data.new_alerts && data.new_alerts.length > 0) {
         if (window.__toast?.addToast) {
           data.new_alerts.forEach((alert) => {
@@ -136,6 +170,65 @@ export default function App() {
         ...prev,
         [data.server]: data.metrics,
       }));
+    } else if (data.type === 'server_event') {
+      // Real-time server CRUD notifications
+      handleServerEvent(data.event, data.server);
+    } else if (data.type === 'server_status_change') {
+      // Real-time server status change notification
+      handleStatusChange(data.server_id, data.old_status, data.new_status);
+    }
+  }
+
+  function handleServerEvent(event, server) {
+    if (event === 'added') {
+      setServers((prev) => {
+        if (prev.some((s) => s.id === server.id)) return prev;
+        return [...prev, server];
+      });
+      if (window.__toast?.addToast) {
+        window.__toast.addToast({
+          type: 'info',
+          title: 'Server Added',
+          message: `${server.name} (${server.host}) registered`,
+          duration: 4000,
+        });
+      }
+    } else if (event === 'updated') {
+      setServers((prev) => prev.map((s) => (s.id === server.id ? server : s)));
+      if (window.__toast?.addToast) {
+        window.__toast.addToast({
+          type: 'info',
+          title: 'Server Updated',
+          message: `${server.name} configuration changed`,
+          duration: 4000,
+        });
+      }
+    } else if (event === 'deleted') {
+      setServers((prev) => prev.filter((s) => s.id !== server.id));
+      if (window.__toast?.addToast) {
+        window.__toast.addToast({
+          type: 'warning',
+          title: 'Server Removed',
+          message: `${server.name} unregistered from monitoring`,
+          duration: 4000,
+        });
+      }
+    }
+  }
+
+  function handleStatusChange(serverId, oldStatus, newStatus) {
+    setServers((prev) =>
+      prev.map((s) => (s.id === serverId ? { ...s, status: newStatus } : s))
+    );
+    if (newStatus === 'offline' && oldStatus !== 'offline') {
+      if (window.__toast?.addToast) {
+        window.__toast.addToast({
+          type: 'critical',
+          title: 'Server Offline',
+          message: `Server ${serverId} went from ${oldStatus} to offline`,
+          duration: 8000,
+        });
+      }
     }
   }
 
@@ -190,6 +283,10 @@ export default function App() {
           servers={servers}
           metrics={metrics}
           alerts={alerts}
+          customChecks={customChecks}
+          cacheStats={cacheStats}
+          cacheStatsLoading={cacheStatsLoading}
+          onRefreshCache={refreshCacheStats}
           onViewChange={setActiveView}
           loading={loading}
         />
@@ -200,6 +297,7 @@ export default function App() {
           servers={servers}
           metrics={metrics}
           alerts={alerts}
+          customChecks={customChecks}
           onFetchHistory={fetchHistory}
           metricHistory={metricHistory}
           onAddServer={fetchInitialData}
@@ -313,7 +411,7 @@ function ForecastView({ servers }) {
   );
 }
 
-function ServerGrid({ servers, metrics, alerts, onFetchHistory, metricHistory, onAddServer }) {
+function ServerGrid({ servers, metrics, alerts, customChecks, onFetchHistory, metricHistory, onAddServer }) {
   // Filter alerts by server
   const alertsByServer = {};
   (alerts || []).forEach((a) => {
@@ -503,6 +601,9 @@ function ServerGrid({ servers, metrics, alerts, onFetchHistory, metricHistory, o
             server={server}
             metrics={metrics[server.name] || metrics[server.id]}
             alerts={alertsByServer[server.name] || []}
+            customChecks={(customChecks || []).filter(
+              (c) => c.server === server.name || c.server === server.id
+            )}
             onFetchHistory={(measurement) =>
               onFetchHistory(server.name, measurement)
             }

@@ -68,6 +68,7 @@ class ServerBase(BaseModel):
 class ServerCreate(ServerBase):
     """Request: register a new server to monitor."""
     tags: dict[str, str] = Field(default_factory=dict)
+    custom_checks: list[CustomCheckConfig] = Field(default_factory=list, description="Per-server custom checks")
 
 class ServerUpdate(BaseModel):
     """Request: update an existing server's registration details.
@@ -84,12 +85,14 @@ class ServerUpdate(BaseModel):
     snmp_priv_protocol: Optional[SNMPPrivProtocol] = Field(default=None, description="SNMPv3 privacy protocol (DES or AES)")
     snmp_priv_password: Optional[str] = Field(default=None, description="SNMPv3 privacy password")
     tags: Optional[dict[str, str]] = Field(default=None, description="Server tags")
+    custom_checks: Optional[list[CustomCheckConfig]] = Field(default=None, description="Custom checks to overwrite")
 
 
 class ServerResponse(ServerBase):
     """Response: server info with computed status."""
     status: ServerStatus = ServerStatus.UNKNOWN
     tags: dict[str, str] = Field(default_factory=dict)
+    custom_checks: list[CustomCheckConfig] = Field(default_factory=list, description="Per-server custom checks")
     last_seen: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -220,6 +223,44 @@ class SystemOverview(BaseModel):
     avg_memory: float = 0.0
     avg_disk: float = 0.0
 
+class CustomCheckConfig(BaseModel):
+    """Configuration for a single custom check on a server."""
+    name: str = Field(..., description="Check name (e.g. 'tomcat', 'opensip')")
+    check_type: str = Field(..., description="tcp_port | http | process | custom_snmp | script")
+    target: Optional[str] = Field(default=None, description="Target hostname/IP (defaults to server host)")
+    port: Optional[int] = Field(default=None, description="TCP port for tcp_port checks (e.g. 8080 for Tomcat)")
+    url: Optional[str] = Field(default=None, description="URL for http checks (e.g. http://host:8080/health)")
+    expect_status: Optional[int] = Field(default=200, description="Expected HTTP status for http checks")
+    process_name: Optional[str] = Field(default=None, description="Process name for process checks")
+    oid: Optional[str] = Field(default=None, description="Custom SNMP OID for custom_snmp checks")
+    warn_threshold: Optional[float] = Field(default=None, description="Warning threshold for numeric checks")
+    crit_threshold: Optional[float] = Field(default=None, description="Critical threshold for numeric checks")
+    interval_seconds: int = Field(default=60, description="Check interval in seconds")
+    timeout_seconds: int = Field(default=10, description="Timeout per check attempt")
+    tags: dict[str, str] = Field(default_factory=dict, description="Optional tags for categorization")
+
+
+class CustomCheckResult(BaseModel):
+    """Result of a single custom check execution."""
+    name: str = Field(..., description="Check name")
+    check_type: str = Field(..., description="Check type")
+    server: str = Field(..., description="Server ID this check ran on")
+    success: bool = Field(..., description="Whether the check passed")
+    status: str = Field(default="online", description="online | offline | degraded")
+    value: Optional[float] = Field(default=None, description="Numeric value if applicable")
+    message: str = Field(default="", description="Human-readable result message")
+    response_time_ms: float = Field(default=0.0, description="Check duration in milliseconds")
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    error: Optional[str] = Field(default=None, description="Error details if check failed")
+
+
+class ServerChecksResponse(BaseModel):
+    """Response: custom check results for a server."""
+    server: str
+    checks: list[CustomCheckResult]
+    total: int
+
+
 class HealthResponse(BaseModel):
     """Health check response."""
     status: str = "ok"
@@ -227,3 +268,4 @@ class HealthResponse(BaseModel):
     uptime_seconds: float = 0.0
     influxdb_connected: bool = False
     ollama_connected: bool = False
+    vector_cache_stats: Optional[dict[str, Any]] = Field(default=None, description="AI remediation cache performance stats (total_requests, cache_hit_rate, etc.)")

@@ -23,6 +23,9 @@ pysnmp-lextudio>=6.0.0
 apscheduler>=3.10.4
 httpx>=0.25.0
 
+# Vector DB / Embeddings
+qdrant-client>=1.9.0
+
 # AI / Ollama Integration
 requests>=2.31.0
 
