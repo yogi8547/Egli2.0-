@@ -19,6 +19,7 @@ import NetworkTopology from './components/NetworkTopology';
 import AddServerModal from './components/AddServerModal';
 import ImportServersModal from './components/ImportServersModal';
 import ForecastCard from './components/ForecastCard';
+import AnomalyDetection from './components/AnomalyDetection';
 import { Activity, Plus, Server, Upload, Download } from 'lucide-react';
 import ParticleBackground from './components/ParticleBackground';
 import { ToastProvider, useToast } from './components/Toast';
@@ -321,6 +322,10 @@ export default function App() {
           metrics={metrics}
           alerts={alerts}
         />
+      )}
+
+      {activeView === 'anomalies' && !loading && (
+        <AnomalyDetection />
       )}
 
       {activeView === 'self-healing' && !loading && (

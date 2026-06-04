@@ -19,6 +19,7 @@ import {
   Sun,
   Moon,
   Radio,
+  AlertTriangle,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import LiveClock from './LiveClock';
@@ -30,6 +31,7 @@ const NAV_ITEMS = [
   { id: 'servers', label: 'Servers', icon: Server },
   { id: 'network', label: 'Network', icon: Network },
   { id: 'alerts', label: 'Alerts', icon: Bell },
+  { id: 'anomalies', label: 'Anomalies', icon: AlertTriangle },
   { id: 'self-healing', label: 'Self-Healing', icon: Shield },
   { id: 'forecasts', label: 'Forecasts', icon: TrendingUp },
   { id: 'ai', label: 'AI Assistant', icon: Bot },

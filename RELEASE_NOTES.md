@@ -92,7 +92,51 @@ Mock servers seeded with realistic custom check configurations.
 
 ---
 
-## 5. Infrastructure & Deployment
+## 5. Anomaly Detection Dashboard
+
+New dedicated dashboard for statistical anomaly detection:
+
+**Summary cards:**
+- **Total Baselines** — Number of learned patterns per server+metric+hour
+- **Total Anomalies** — All-time anomaly detections
+- **Last Hour** — Recent anomalies (color-coded green/red)
+- **Tracked Metrics** — Badges showing CPU, Memory, Disk monitoring
+
+**Anomaly Timeline tab:**
+- Server name + metric icon for each detection
+- Severity badges (critical/warning) with color-coded backgrounds
+- Direction indicators (TrendingUp/TrendingDown) with current value
+- Expected range display: `Expected: low–high`
+- z-score, baseline mean, and stddev per anomaly
+- Empty state when no anomalies detected
+
+**Learned Baselines tab:**
+- Sortable table (click column headers: Server, Metric, Hour, Mean, StdDev, Samples, Anomalies)
+- Metric filter buttons (All/CPU/Memory/Disk)
+- Color-coded mean values (red >80%, yellow >60%, white normal)
+- StdDev indicators (yellow >20, green <10)
+- Anomaly count per baseline with bold red for >0
+
+**UX features:**
+- Loading skeleton (`AnomalySkeleton`) matching full layout on initial load
+- Auto-refresh every 30s with cleanup on unmount
+- Manual refresh button with spinning icon
+- Info footer explaining z-score methodology (2.5σ threshold, 30-sample window, 15-min cooldown)
+
+**Files:**
+- `frontend/src/components/AnomalyDetection.jsx` — 603 lines
+- `frontend/src/components/__tests__/AnomalyDetection.test.jsx` — 19 tests
+- `frontend/src/components/Layout.jsx` — Added "Anomalies" nav item
+- `frontend/src/App.jsx` — Added import and routing for 'anomalies' view
+
+API endpoints consumed:
+- `GET /api/anomalies` — Recent anomaly detections
+- `GET /api/anomalies/summary` — Summary statistics
+- `GET /api/anomalies/baselines` — Learned baselines per server+metric+hour
+
+---
+
+## 6. Infrastructure & Deployment
 
 - **`install-ubuntu-native.sh`** — Full native deployment script (Qdrant, InfluxDB, Ollama, backend, Nginx)
 - **`start.bat`** — Auto-installs pip dependencies and starts both frontend + backend
@@ -102,9 +146,20 @@ Mock servers seeded with realistic custom check configurations.
 
 ---
 
-## 6. Test Suite
+## 7. Test Suite
 
-All **329 tests pass across 17 test files** — no regressions.
+All **348 tests pass across 18 test files** — no regressions (+19 new AnomalyDetection tests).
+
+| Test File | Tests | Coverage |
+|-----------|-------|----------|
+| AnomalyDetection | 19 | Loading skeleton, summary cards, tabs, anomaly timeline, baseline table, metric filtering, refresh, error state |
+| SystemOverview | 19 | Skeleton, CachePerformance, refresh button |
+| AIOpsPanel | 18 | Panel interactions |
+| AlertPanel | 22 | Alert lifecycle, actions |
+| ServerCard | 25 | Custom check badges render |
+| AIChat | 17 | Chat interactions |
+| Layout | 14 | Navigation |
+| +12 more files | 214 | All passing |
 
 | Test File | Tests | Coverage |
 |-----------|-------|----------|
