@@ -257,12 +257,49 @@ storage-max-concurrent-compactions: 0
 storage-compact-full-write-cold-duration: "6h"
 storage-retention-check-interval: "30m"
 INFLUXDB_EOF
-
-        run_step "Enabling InfluxDB systemd service" systemctl enable influxdb
     fi
+
+    # Ensure the systemd unit exists (the package doesn't always ship one)
+    # Run unconditionally — handles both fresh installs and pre-existing binaries
+    # without a systemd unit (e.g. partial installs, manual extraction).
+    if [[ ! -f /lib/systemd/system/influxdb.service && ! -f /etc/systemd/system/influxdb.service ]]; then
+        info "Creating InfluxDB systemd unit (not provided by package)..."
+        # Create the influxdb user if it doesn't exist
+        id -u influxdb &>/dev/null || useradd -r -s /usr/sbin/nologin -d /var/lib/influxdb2 influxdb
+        chown -R influxdb:influxdb /var/lib/influxdb2 2>/dev/null || true
+
+        cat > /etc/systemd/system/influxdb.service << 'INFLUXDB_SERVICE_EOF'
+[Unit]
+Description=InfluxDB 2.7 Time-Series Database
+Documentation=https://docs.influxdata.com/influxdb/v2/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=influxdb
+Group=influxdb
+ExecStart=/usr/bin/influxd --config /etc/influxdb2/config.yaml
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+INFLUXDB_SERVICE_EOF
+        systemctl daemon-reload
+        log "Created /etc/systemd/system/influxdb.service"
+    fi
+
+    run_step "Enabling InfluxDB systemd service" systemctl enable influxdb
 
     if ! is_service_running influxdb; then
         run_step "Starting InfluxDB" systemctl start influxdb
+        # Give InfluxDB a moment to boot before we try to configure it
+        sleep 3
     fi
 
     # Initialize InfluxDB (set up org, bucket, token)
