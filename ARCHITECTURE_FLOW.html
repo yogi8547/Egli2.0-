@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Egli2.0 — Architecture Flow Diagram</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0f172a;
+            color: #e2e8f0;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            padding: 24px;
+            min-height: 100vh;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 24px;
+            padding: 20px;
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border: 1px solid #1e293b;
+            border-radius: 12px;
+        }
+        .header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 4px;
+        }
+        .header p {
+            font-size: 14px;
+            color: #94a3b8;
+        }
+        .header p span {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 600;
+        }
+        .diagram-container {
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 12px;
+            padding: 32px;
+            overflow: auto;
+            margin-bottom: 24px;
+        }
+        .diagram-container svg {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 16px;
+            justify-content: center;
+            margin-top: 16px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: #94a3b8;
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: 1px solid #1e293b;
+            background: #1e293b/50;
+        }
+        .legend-swatch {
+            width: 14px;
+            height: 14px;
+            border-radius: 3px;
+        }
+        .controls {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .controls button {
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            background: #1e293b;
+            color: #cbd5e1;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .controls button:hover {
+            background: #334155;
+            border-color: #475569;
+            color: #f1f5f9;
+        }
+        .controls button.zoom-in { }
+        .controls button.zoom-out { }
+        .controls button.reset { background: #312e81; border-color: #6366f1; color: #e0e7ff; }
+        .footer {
+            text-align: center;
+            font-size: 12px;
+            color: #475569;
+            padding: 16px;
+        }
+        .footer a { color: #6366f1; text-decoration: none; }
+        .footer a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Egli2.0 — Architecture &amp; Data Flow</h1>
+        <p>AI-powered infrastructure monitoring · <span>Self-hosted · No cloud dependencies</span></p>
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-swatch" style="background:#312e81;border:1px solid #6366f1"></div>
+                Frontend (React)
+            </div>
+            <div class="legend-item">
+                <div class="legend-swatch" style="background:#1e3a5f;border:1px solid #3b82f6"></div>
+                Backend (FastAPI)
+            </div>
+            <div class="legend-item">
+                <div class="legend-swatch" style="background:#1a2e1a;border:1px solid #22c55e"></div>
+                Infrastructure Dependencies
+            </div>
+            <div class="legend-item">
+                <div class="legend-swatch" style="background:#3b1f1f;border:1px solid #ef4444"></div>
+                Monitoring / External
+            </div>
+            <div class="legend-item">
+                <div class="legend-swatch" style="background:#3b1f3b;border:1px solid #a855f7"></div>
+                RCA Module
+            </div>
+            <div class="legend-item">
+                <div class="legend-swatch" style="background:#3b2e1f;border:1px solid #f59e0b"></div>
+                Self-Healing
+            </div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <button class="zoom-in" onclick="zoomIn()">🔍 Zoom In</button>
+        <button class="zoom-out" onclick="zoomOut()">🔍 Zoom Out</button>
+        <button class="reset" onclick="resetZoom()">⟲ Reset</button>
+    </div>
+
+    <div class="diagram-container" id="diagramContainer">
+        <pre class="mermaid" id="mermaidDiagram">
+%%{init: {'theme': 'dark', 'themeVariables': { 'fontSize': '13px', 'primaryColor': '#6366f1', 'primaryTextColor': '#e2e8f0', 'lineColor': '#4b5563', 'secondaryColor': '#1e293b', 'tertiaryColor': '#0f172a'}}}%%
+
+graph TB
+    subgraph Users["👤 User Interaction"]
+        Browser["🌐 Browser / Dashboard"]
+        CLI["💻 CLI / curl / API Clients"]
+    end
+
+    subgraph Docker["🐳 Docker Compose Stack"]
+        direction LR
+        
+        subgraph Frontend["Frontend (Nginx + React)"]
+            Nginx["Nginx Reverse Proxy\nPort 80/443"]
+            ReactApp["React 18 + Vite\nTailwindCSS + Recharts"]
+            
+            subgraph ReactComponents["React Components"]
+                Layout["Layout\nSidebar + Header"]
+                SysOverview["SystemOverview\nStats + Gauges"]
+                ServerCard["ServerCard\nPer-server Gauges"]
+                MetricChart["MetricChart\nRecharts Sparklines"]
+                AlertPanel["AlertPanel\nFilter + Manage"]
+                AIChat["AIChat\nChat Interface"]
+                NetworkTop["NetworkTopology\nVisual Map"]
+                AnomalyDet["AnomalyDetection\nAnomaly Explorer"]
+                SelfHeal["SelfHealingPanel\nAuto-Fix Controls"]
+                ForecastView["ForecastCard\nPredictive Charts"]
+                Toast["Toast\nNotifications"]
+            end
+        end
+
+        subgraph Backend["Backend (FastAPI Python)"]
+            FastAPI["FastAPI Server\nPort 8000"]
+            
+            subgraph APIRoutes["API Routes"]
+                ServersAPI["/api/servers\nCRUD + Bulk Import/Export"]
+                MetricsAPI["/api/metrics\nCurrent + History"]
+                AlertsAPI["/api/alerts\nList + Ack + Resolve"]
+                AIAPI["/api/ai\nChat + Analyze + Stream"]
+                WSAPI["/ws/metrics\nWebSocket Real-time"]
+                RemediationAPI["/api/alerts/*/remediate\nActions + AI"]
+                CustomChecksAPI["/api/checks\nCustom Service Checks"]
+                VectorAPI["/api/vectors\nCache Stats"]
+            end
+
+            subgraph Services["Backend Services (Singletons)"]
+                SNMPPoller["SNMP Poller\nSNMP v2c/v3 + Mock Fallback"]
+                AlertEngine["Alert Engine\nThreshold Evaluation + Lifecycle"]
+                AIService["AI Service\nOllama Client + Cache Tracking"]
+                Forecaster["Forecaster\nLinear Regression + Predictions"]
+                AnomalyDetector["Anomaly Detector\nZ-score Baselines + Time-of-day"]
+                RemediationEngine["Remediation Engine\nPredefined Recipes + Cooldowns"]
+                CustomCheckRunner["Custom Check Runner\nTCP/HTTP + Concurrency"]
+                VectorStore["Vector Store\nQdrant Client + Embeddings"]
+            end
+
+            subgraph Models["Pydantic Models (schemas.py)"]
+                ServerModels["Server / Metric / Alert\nRequest/Response Models"]
+            end
+
+            Config["config.py\nEnvironment Settings"]
+            Database["database.py\nInfluxDB Connection Manager"]
+        end
+
+        subgraph Infrastructure["Infrastructure Dependencies"]
+            InfluxDB["InfluxDB 2.7\nTime-Series Database\nPort 8086"]
+            Ollama["Ollama\nLocal LLM Inference\nPort 11434\n(llama3.2 / mistral)"]
+            Qdrant["Qdrant\nVector Database\nPort 6333\n(Alert Embeddings)"]
+        end
+    end
+
+    subgraph Monitoring["📡 Monitoring Services"]
+        PollerService["SNMP Poller\nStandalone Microservice\n(monitoring/poller.py)"]
+        MockData["Mock Data Generator\n(mock_data/seed.py)"]
+        ManagedServers["🖥️ Managed Servers\nSNMP-enabled Targets"]
+    end
+
+    subgraph RCA["🔍 Root Cause Analysis (rca/ module)"]
+        DepGraph["Dependency Graph\nComponent Relationships"]
+        EventStore["Event Store\nTime + Component Indexed"]
+        OllamaClient["Ollama Client\nHypothesis Generation"]
+        RCAnalysis["RCA Engine\nCorrelation + Investigation"]
+    end
+
+    subgraph SelfHealing["⚡ Self-Healing & Automation"]
+        Systemd["systemd Services\nHealth Checks + Timers"]
+        Notify["Notification Scripts\nAlert + Health Notifications"]
+    end
+
+    %% ── Data Flow Connections ──
+
+    %% User → Frontend
+    Browser --> Nginx
+    CLI --> FastAPI
+
+    %% Frontend Internal
+    Nginx --> ReactApp
+    ReactApp --> Layout
+    Layout --> SysOverview & ServerCard & AlertPanel & AIChat & NetworkTop & AnomalyDet & SelfHeal & ForecastView
+    AlertPanel --> Toast
+    SysOverview --> MetricChart
+    ServerCard --> MetricChart
+
+    %% Frontend → Backend (HTTP)
+    ReactApp -.->|"HTTP /api/*"| FastAPI
+    ReactApp -.->|"WebSocket /ws/metrics"| WSAPI
+
+    %% Backend Internal
+    FastAPI --> APIRoutes
+
+    %% API → Services wiring
+    ServersAPI --> SNMPPoller
+    ServersAPI --> WSAPI
+
+    MetricsAPI --> SNMPPoller
+    MetricsAPI --> Database
+
+    AlertsAPI --> AlertEngine
+    AlertsAPI --> AIService
+    AlertsAPI --> RemediationEngine
+
+    AIAPI --> AIService
+    AIAPI --> SNMPPoller
+    AIAPI --> AlertEngine
+    AIAPI --> Database
+
+    WSAPI --> SNMPPoller
+    WSAPI --> AlertEngine
+    WSAPI --> CustomCheckRunner
+    WSAPI --> VectorStore
+
+    %% Poller Data Flow
+    SNMPPoller -->|"Write Metrics"| InfluxDB
+    SNMPPoller -->|"Feed Data"| Forecaster
+    SNMPPoller -->|"Feed Data"| AnomalyDetector
+
+    AlertEngine -->|"Embed Alerts"| VectorStore
+    AIService -->|"Cache Lookup"| VectorStore
+
+    %% Infrastructure Connections
+    Database -->|"Flux Queries"| InfluxDB
+    AIService -->|"HTTP /api/chat + /api/generate"| Ollama
+    VectorStore -->|"HTTP /collections/*"| Qdrant
+
+    %% External Monitoring
+    PollerService -->|"SNMP v2c/v3"| ManagedServers
+    MockData -->|"Seed Historical Data"| InfluxDB
+    SNMPPoller -.->|"Mock Fallback"| ManagedServers
+
+    %% RCA Module
+    RCAnalysis --> DepGraph
+    RCAnalysis --> EventStore
+    RCAnalysis --> OllamaClient
+    RCAnalysis -.->|"Reads Alerts"| AlertEngine
+
+    %% Self-Healing
+    Systemd -->|"Systemd Timers"| Notify
+    RemediationEngine -.->|"SSH Actions"| ManagedServers
+
+    %% ── Styling ──
+    classDef frontend fill:#312e81,stroke:#6366f1,color:#e0e7ff
+    classDef backend fill:#1e3a5f,stroke:#3b82f6,color:#dbeafe
+    classDef infra fill:#1a2e1a,stroke:#22c55e,color:#dcfce7
+    classDef monitoring fill:#3b1f1f,stroke:#ef4444,color:#fee2e2
+    classDef rca fill:#3b1f3b,stroke:#a855f7,color:#f3e8ff
+    classDef healing fill:#3b2e1f,stroke:#f59e0b,color:#fef3c7
+
+    class ReactApp,Layout,SysOverview,ServerCard,MetricChart,AlertPanel,AIChat,NetworkTop,AnomalyDet,SelfHeal,ForecastView,Toast frontend
+    class FastAPI,ServersAPI,MetricsAPI,AlertsAPI,AIAPI,WSAPI,RemediationAPI,CustomChecksAPI,VectorAPI,SNMPPoller,AlertEngine,AIService,Forecaster,AnomalyDetector,RemediationEngine,CustomCheckRunner,VectorStore,ServerModels,Config,Database backend
+    class InfluxDB,Ollama,Qdrant infra
+    class PollerService,MockData,ManagedServers monitoring
+    class DepGraph,EventStore,OllamaClient,RCAnalysis rca
+    class Systemd,Notify healing
+        </pre>
+    </div>
+
+    <div class="footer">
+        Egli2.0 — <a href="ARCHITECTURE_FLOW.md">View Markdown Source</a> ·
+        Built with <a href="https://mermaid.js.org/" target="_blank">Mermaid.js</a>
+    </div>
+
+    <script>
+        let scale = 1;
+        const container = document.getElementById('diagramContainer');
+
+        mermaid.initialize({
+            theme: 'dark',
+            themeVariables: {
+                fontSize: '13px',
+                primaryColor: '#6366f1',
+                primaryTextColor: '#e2e8f0',
+                lineColor: '#4b5563',
+                secondaryColor: '#1e293b',
+                tertiaryColor: '#0f172a'
+            },
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis',
+                padding: 16,
+            },
+            securityLevel: 'loose',
+            startOnLoad: true,
+        });
+
+        function zoomIn() {
+            scale = Math.min(scale + 0.2, 3.0);
+            applyZoom();
+        }
+
+        function zoomOut() {
+            scale = Math.max(scale - 0.2, 0.3);
+            applyZoom();
+        }
+
+        function resetZoom() {
+            scale = 1;
+            applyZoom();
+        }
+
+        function applyZoom() {
+            const svg = container.querySelector('svg');
+            if (svg) {
+                svg.style.transform = `scale(${scale})`;
+                svg.style.transformOrigin = 'top center';
+                svg.style.transition = 'transform 0.2s ease';
+            }
+        }
+
+        // Re-apply zoom after Mermaid renders
+        const observer = new MutationObserver(() => {
+            const svg = container.querySelector('svg');
+            if (svg) {
+                applyZoom();
+                observer.disconnect();
+            }
+        });
+        observer.observe(container, { childList: true, subtree: true });
+    </script>
+</body>
+</html>
