@@ -1,0 +1,232 @@
+{
+  "name": "1 - Job Discovery",
+  "nodes": [
+    {
+      "id": "trigger-schedule",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "hours", "hoursInterval": 6 }
+          ]
+        }
+      }
+    },
+    {
+      "id": "adzuna-global",
+      "name": "Adzuna - Global (GB)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, -300],
+      "parameters": {
+        "url": "http://api.adzuna.com/v1/api/jobs/gb/search/1",
+        "method": "GET",
+        "queryParameters": {
+          "parameters": [
+            { "name": "app_id", "value": "={{ $credentials.adzunaApi.oauthTokenData.app_id }}" },
+            { "name": "app_key", "value": "={{ $credentials.adzunaApi.oauthTokenData.app_key }}" },
+            { "name": "what", "value": "software engineer developer fullstack backend frontend devops" },
+            { "name": "where", "value": "remote" },
+            { "name": "results_per_page", "value": 20 },
+            { "name": "content-type", "value": "application/json" },
+            { "name": "sort_by", "value": "date" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "credentials": { "adzunaApi": "Adzuna API" }
+    },
+    {
+      "id": "adzuna-india",
+      "name": "Adzuna - India (IN)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, -100],
+      "parameters": {
+        "url": "http://api.adzuna.com/v1/api/jobs/in/search/1",
+        "method": "GET",
+        "queryParameters": {
+          "parameters": [
+            { "name": "app_id", "value": "={{ $credentials.adzunaApi.oauthTokenData.app_id }}" },
+            { "name": "app_key", "value": "={{ $credentials.adzunaApi.oauthTokenData.app_key }}" },
+            { "name": "what", "value": "software engineer developer fullstack backend frontend devops" },
+            { "name": "results_per_page", "value": 20 },
+            { "name": "content-type", "value": "application/json" },
+            { "name": "sort_by", "value": "date" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "credentials": { "adzunaApi": "Adzuna API" }
+    },
+    {
+      "id": "adzuna-us",
+      "name": "Adzuna - USA (US)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 100],
+      "parameters": {
+        "url": "http://api.adzuna.com/v1/api/jobs/us/search/1",
+        "method": "GET",
+        "queryParameters": {
+          "parameters": [
+            { "name": "app_id", "value": "={{ $credentials.adzunaApi.oauthTokenData.app_id }}" },
+            { "name": "app_key", "value": "={{ $credentials.adzunaApi.oauthTokenData.app_key }}" },
+            { "name": "what", "value": "software engineer developer fullstack backend frontend devops" },
+            { "name": "results_per_page", "value": 20 },
+            { "name": "content-type", "value": "application/json" },
+            { "name": "sort_by", "value": "date" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "credentials": { "adzunaApi": "Adzuna API" }
+    },
+    {
+      "id": "rss-remotework",
+      "name": "RSS - Remote OK",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [250, 350],
+      "parameters": {
+        "url": "https://remoteok.com/remote-dev-jobs.rss",
+        "options": {}
+      }
+    },
+    {
+      "id": "rss-weworkremotely",
+      "name": "RSS - We Work Remotely",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [250, 500],
+      "parameters": {
+        "url": "https://weworkremotely.com/categories/remote-programming-jobs.rss",
+        "options": {}
+      }
+    },
+    {
+      "id": "code-normalize-gb",
+      "name": "Normalize - Adzuna GB",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, -300],
+      "parameters": {
+        "jsCode": "try {\n  const results = $input.first().json.results || [];\n  return results.map(job => ({\n    json: {\n      source_id: `adzuna_gb_${job.id}`,\n      source: 'adzuna', title: job.title || '',\n      company: (job.company && job.company.display_name) || '',\n      location: (job.location && job.location.display_name) || 'Remote',\n      country: 'global',\n      salary_min: job.salary_min || null, salary_max: job.salary_max || null,\n      currency: job.salary_currency || 'GBP',\n      description: job.description || '',\n      application_url: job.redirect_url || '',\n      application_type: 'external_link',\n      posted_at: job.created || new Date().toISOString(),\n      discovered_at: new Date().toISOString()\n    }\n  }));\n} catch(e) { return [{ json: { _error: e.message, _source: 'adzuna_gb' } }]; }"
+      }
+    },
+    {
+      "id": "code-normalize-in",
+      "name": "Normalize - Adzuna IN",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, -100],
+      "parameters": {
+        "jsCode": "try {\n  const results = $input.first().json.results || [];\n  return results.map(job => ({\n    json: {\n      source_id: `adzuna_in_${job.id}`,\n      source: 'adzuna', title: job.title || '',\n      company: (job.company && job.company.display_name) || '',\n      location: (job.location && job.location.display_name) || 'Remote - India',\n      country: 'india',\n      salary_min: job.salary_min || null, salary_max: job.salary_max || null,\n      currency: job.salary_currency || 'INR',\n      description: job.description || '',\n      application_url: job.redirect_url || '',\n      application_type: 'external_link',\n      posted_at: job.created || new Date().toISOString(),\n      discovered_at: new Date().toISOString()\n    }\n  }));\n} catch(e) { return [{ json: { _error: e.message, _source: 'adzuna_in' } }]; }"
+      }
+    },
+    {
+      "id": "code-normalize-us",
+      "name": "Normalize - Adzuna US",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 100],
+      "parameters": {
+        "jsCode": "try {\n  const results = $input.first().json.results || [];\n  return results.map(job => ({\n    json: {\n      source_id: `adzuna_us_${job.id}`,\n      source: 'adzuna', title: job.title || '',\n      company: (job.company && job.company.display_name) || '',\n      location: (job.location && job.location.display_name) || 'Remote',\n      country: 'global',\n      salary_min: job.salary_min || null, salary_max: job.salary_max || null,\n      currency: job.salary_currency || 'USD',\n      description: job.description || '',\n      application_url: job.redirect_url || '',\n      application_type: 'external_link',\n      posted_at: job.created || new Date().toISOString(),\n      discovered_at: new Date().toISOString()\n    }\n  }));\n} catch(e) { return [{ json: { _error: e.message, _source: 'adzuna_us' } }]; }"
+      }
+    },
+    {
+      "id": "code-normalize-rss",
+      "name": "Normalize - RSS Feeds",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 425],
+      "parameters": {
+        "jsCode": "try {\n  return $input.map(item => ({\n    json: {\n      source_id: `rss_${item.json.guid || item.json.link || Math.random().toString(36).slice(2)}`,\n      source: 'rss', title: item.json.title || '',\n      company: item.json.author || item.json['dc:creator'] || '',\n      location: 'Remote', country: 'global',\n      salary_min: null, salary_max: null, currency: null,\n      description: item.json.description || item.json.content || '',\n      application_url: item.json.link || '',\n      application_type: 'external_link',\n      posted_at: item.json.pubDate || item.json.isoDate || new Date().toISOString(),\n      discovered_at: new Date().toISOString()\n    }\n  }));\n} catch(e) { return [{ json: { _error: e.message, _source: 'rss' } }]; }"
+      }
+    },
+    {
+      "id": "code-collect",
+      "name": "Collect All Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 0],
+      "parameters": {
+        "jsCode": "// Safely collects items from ALL upstream branches into one stream\nconst allItems = [];\nfor (const input of $input.all()) {\n  if (input && input.length > 0) {\n    for (const item of input) {\n      if (item.json && !item.json._error) {\n        allItems.push(item);\n      }\n    }\n  }\n}\nreturn allItems;"
+      }
+    },
+    {
+      "id": "code-deduplicate",
+      "name": "Deduplicate & Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [950, 0],
+      "parameters": {
+        "jsCode": "try {\n  const seen = new Set();\n  const remoteKeywords = ['remote', 'anywhere', 'work from home', 'hybrid'];\n  return $input.filter(item => {\n    const job = item.json;\n    if (job._error) return false;\n    const loc = (job.location || '').toLowerCase();\n    const desc = (job.description || '').toLowerCase();\n    const isRemote = remoteKeywords.some(kw => loc.includes(kw) || desc.includes(kw));\n    if (!isRemote) return false;\n    const key = `${(job.company || '').toLowerCase().trim()}|${(job.title || '').toLowerCase().trim()}`;\n    if (seen.has(key)) return false;\n    seen.add(key);\n    return true;\n  });\n} catch(e) { return [{ json: { _error: e.message } }]; }"
+      }
+    },
+    {
+      "id": "gsheet-raw",
+      "name": "Log to Raw Jobs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1150, 0],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": "YOUR_GOOGLE_SHEET_ID",
+        "sheetName": "Raw Jobs",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "source_id": "={{ $json.source_id }}",
+            "source": "={{ $json.source }}",
+            "title": "={{ $json.title }}",
+            "company": "={{ $json.company }}",
+            "location": "={{ $json.location }}",
+            "country": "={{ $json.country }}",
+            "salary_min": "={{ $json.salary_min }}",
+            "salary_max": "={{ $json.salary_max }}",
+            "currency": "={{ $json.currency }}",
+            "description": "={{ $json.description }}",
+            "application_url": "={{ $json.application_url }}",
+            "application_type": "={{ $json.application_type }}",
+            "posted_at": "={{ $json.posted_at }}",
+            "discovered_at": "={{ $json.discovered_at }}"
+          }
+        },
+        "options": { "cellFormat": "USER_ENTERED", "handlingExtraData": "insertInNewColumn" }
+      }
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": {
+      "main": [[
+        { "node": "Adzuna - Global (GB)", "type": "main", "index": 0 },
+        { "node": "Adzuna - India (IN)", "type": "main", "index": 0 },
+        { "node": "Adzuna - USA (US)", "type": "main", "index": 0 },
+        { "node": "RSS - Remote OK", "type": "main", "index": 0 },
+        { "node": "RSS - We Work Remotely", "type": "main", "index": 0 }
+      ]]
+    },
+    "Adzuna - Global (GB)": { "main": [[{ "node": "Normalize - Adzuna GB", "type": "main", "index": 0 }]] },
+    "Adzuna - India (IN)": { "main": [[{ "node": "Normalize - Adzuna IN", "type": "main", "index": 0 }]] },
+    "Adzuna - USA (US)": { "main": [[{ "node": "Normalize - Adzuna US", "type": "main", "index": 0 }]] },
+    "RSS - Remote OK": { "main": [[{ "node": "Normalize - RSS Feeds", "type": "main", "index": 0 }]] },
+    "RSS - We Work Remotely": { "main": [[{ "node": "Normalize - RSS Feeds", "type": "main", "index": 0 }]] },
+    "Normalize - Adzuna GB": { "main": [[{ "node": "Collect All Results", "type": "main", "index": 0 }]] },
+    "Normalize - Adzuna IN": { "main": [[{ "node": "Collect All Results", "type": "main", "index": 1 }]] },
+    "Normalize - Adzuna US": { "main": [[{ "node": "Collect All Results", "type": "main", "index": 2 }]] },
+    "Normalize - RSS Feeds": { "main": [[{ "node": "Collect All Results", "type": "main", "index": 3 }]] },
+    "Collect All Results": { "main": [[{ "node": "Deduplicate & Filter", "type": "main", "index": 0 }]] },
+    "Deduplicate & Filter": { "main": [[{ "node": "Log to Raw Jobs", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "timezone": "Asia/Kolkata",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": ["job-discovery", "adzuna", "rss"]
+}

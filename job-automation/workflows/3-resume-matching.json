@@ -1,0 +1,224 @@
+{
+  "name": "3 - Resume Matching & Scoring",
+  "nodes": [
+    {
+      "id": "trigger-schedule",
+      "name": "Every 30 Mins (or Manual)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "minutes", "minutesInterval": 30 }
+          ]
+        }
+      }
+    },
+    {
+      "id": "gsheet-read",
+      "name": "Read Unscored Jobs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [200, 0],
+      "parameters": {
+        "operation": "read",
+        "documentId": "YOUR_GOOGLE_SHEET_ID",
+        "sheetName": "Enriched Jobs",
+        "options": {}
+      }
+    },
+    {
+      "id": "code-filter-unscored",
+      "name": "Filter Unscored",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 0],
+      "parameters": {
+        "jsCode": "try {\n  // Keep only rows that have enrichment data but no match score yet\n  const data = $input.filter(item => {\n    const row = item.json;\n    // Must have summary (enriched) and no match_score yet\n    return row.summary && row.summary.trim() !== '' && (!row.match_score || row.match_score === '');\n  });\n  \n  if (data.length === 0) {\n    return [{ json: { _no_new_jobs: true } }];\n  }\n  \n  return data.slice(0, 20);\n} catch(e) {\n  return [{ json: { _error: e.message } }];\n}"
+      }
+    },
+    {
+      "id": "if-has-jobs",
+      "name": "Has Unscored Jobs?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 0],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json._no_new_jobs }}",
+              "operation": "isNotEmpty",
+              "value2": ""
+            }
+          ]
+        },
+        "options": { "rightExpression": true }
+      }
+    },
+    {
+      "id": "code-load-resume",
+      "name": "Load Resume & Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, -100],
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════════════════════════════════════\n//  RESUME DATA — Edit this to match YOUR profile\n// ═══════════════════════════════════════════════════════════════════════\n\nconst resume = {\n  name: \"YOUR NAME\",\n  email: \"your.email@example.com\",\n  total_years_experience: 5,\n  current_title: \"Senior Software Engineer\",\n  target_roles: [\"Software Engineer\", \"Full Stack Developer\", \"Backend Engineer\", \"SDE\"],\n  skills: [\n    \"JavaScript\", \"TypeScript\", \"React\", \"Node.js\", \"Python\", \"Java\",\n    \"PostgreSQL\", \"MongoDB\", \"Redis\", \"AWS\", \"Docker\", \"Kubernetes\",\n    \"REST APIs\", \"GraphQL\", \"Git\", \"CI/CD\", \"Linux\"\n  ]\n};\n\n// ═══════════════════════════════════════════════════════════════════════\n//  SCORING ENGINE\n// ═══════════════════════════════════════════════════════════════════════\n\nfunction jaccardSimilarity(a, b) {\n  const setA = new Set(a.map(s => s.toLowerCase().trim()));\n  const setB = new Set(b.map(s => s.toLowerCase().trim()));\n  let intersection = 0;\n  const union = new Set([...setA, ...setB]);\n  for (const item of setA) { if (setB.has(item)) intersection++; }\n  return union.size === 0 ? 0 : intersection / union.size;\n}\n\nreturn $input.map(item => {\n  try {\n    const job = item.json;\n    if (job._no_new_jobs) return item;\n\n    const jobSkills = (job.required_skills || '').split(',').map(s => s.trim()).filter(Boolean);\n    const candidateSkills = resume.skills || [];\n    const candidateExperience = resume.total_years_experience || 0;\n    const requiredYoe = Number(job.required_years_experience) || 0;\n\n    // 1. Skill Match (40%)\n    let matchedSkills = [], missingSkills = [];\n    for (const skill of jobSkills) {\n      if (candidateSkills.some(cs => cs.toLowerCase().includes(skill.toLowerCase()))) {\n        matchedSkills.push(skill);\n      } else {\n        missingSkills.push(skill);\n      }\n    }\n    const skillScore = jobSkills.length > 0 ? (matchedSkills.length / jobSkills.length) * 100 : 50;\n\n    // 2. Experience Match (30%)\n    const experienceScore = requiredYoe > 0 ? Math.min((candidateExperience / requiredYoe) * 50, 100) : 50;\n\n    // 3. Title Relevance (20%)\n    const jobTitle = (job.title || '').toLowerCase();\n    const keywords = [...(resume.target_roles || []), ...(resume.current_title || '').split(' ')].map(k => k.toLowerCase());\n    const titleMatchCount = keywords.filter(kw => jobTitle.includes(kw)).length;\n    const titleScore = Math.min((titleMatchCount / Math.min(keywords.length, 10)) * 100, 100);\n\n    // 4. Seniority Fit (10%)\n    const seniority = (job.seniority || '').toLowerCase();\n    let seniorityScore = 50;\n    if (seniority !== 'not specified' && seniority !== '') {\n      if (candidateExperience <= 2) {\n        seniorityScore = seniority === 'junior' ? 100 : seniority === 'mid' ? 70 : 30;\n      } else if (candidateExperience <= 5) {\n        seniorityScore = (seniority === 'mid' || seniority === 'senior') ? 100 : seniority === 'junior' ? 70 : 40;\n      } else {\n        seniorityScore = (seniority === 'senior' || seniority === 'lead') ? 100 : seniority === 'mid' ? 70 : 40;\n      }\n    }\n\n    // Composite\n    const score = Math.round(skillScore * 0.40 + experienceScore * 0.30 + titleScore * 0.20 + seniorityScore * 0.10);\n\n    // Action\n    let action = 'skip';\n    if (score >= 80) action = 'auto';\n    else if (score >= 60) action = 'review';\n\n    return {\n      json: {\n        ...job,\n        match_score: score,\n        match_action: action,\n        matching_skills: matchedSkills.join(', '),\n        missing_skills: missingSkills.join(', '),\n        candidate_yoe: candidateExperience,\n        matched_at: new Date().toISOString()\n      }\n    };\n  } catch(e) {\n    return { json: { ...item.json, match_error: e.message } };\n  }\n});"
+      }
+    },
+    {
+      "id": "if-action",
+      "name": "Route by Score",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, -200],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.match_score }}",
+              "operation": "largerEqual",
+              "value2": 80
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "if-review",
+      "name": "Filter Review from Skip",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1000, 100],
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.match_score }}",
+              "operation": "largerEqual",
+              "value2": 60
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "gsheet-auto",
+      "name": "AUTO (80%+)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1200, -300],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": "YOUR_GOOGLE_SHEET_ID",
+        "sheetName": "Matched Jobs",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "source_id": "={{ $json.source_id }}",
+            "company": "={{ $json.company }}",
+            "title": "={{ $json.title }}",
+            "location": "={{ $json.location }}",
+            "country": "={{ $json.country }}",
+            "match_score": "={{ $json.match_score }}",
+            "match_action": "={{ $json.match_action }}",
+            "seniority": "={{ $json.seniority }}",
+            "summary": "={{ $json.summary }}",
+            "matching_skills": "={{ $json.matching_skills }}",
+            "missing_skills": "={{ $json.missing_skills }}",
+            "application_url": "={{ $json.application_url }}",
+            "posted_at": "={{ $json.posted_at }}",
+            "matched_at": "={{ $json.matched_at }}",
+            "status": "pending",
+            "notes": ""
+          }
+        },
+        "options": { "cellFormat": "USER_ENTERED" }
+      }
+    },
+    {
+      "id": "gsheet-review",
+      "name": "REVIEW (60-79%)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1200, 0],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": "YOUR_GOOGLE_SHEET_ID",
+        "sheetName": "Matched Jobs",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "source_id": "={{ $json.source_id }}",
+            "company": "={{ $json.company }}",
+            "title": "={{ $json.title }}",
+            "location": "={{ $json.location }}",
+            "country": "={{ $json.country }}",
+            "match_score": "={{ $json.match_score }}",
+            "match_action": "={{ $json.match_action }}",
+            "seniority": "={{ $json.seniority }}",
+            "summary": "={{ $json.summary }}",
+            "matching_skills": "={{ $json.matching_skills }}",
+            "missing_skills": "={{ $json.missing_skills }}",
+            "application_url": "={{ $json.application_url }}",
+            "posted_at": "={{ $json.posted_at }}",
+            "matched_at": "={{ $json.matched_at }}",
+            "status": "needs_review",
+            "notes": ""
+          }
+        },
+        "options": { "cellFormat": "USER_ENTERED" }
+      }
+    },
+    {
+      "id": "noop-skip",
+      "name": "Skip (No Jobs)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [800, 150],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Every 30 Mins (or Manual)": {
+      "main": [[{ "node": "Read Unscored Jobs", "type": "main", "index": 0 }]]
+    },
+    "Read Unscored Jobs": {
+      "main": [[{ "node": "Filter Unscored", "type": "main", "index": 0 }]]
+    },
+    "Filter Unscored": {
+      "main": [[{ "node": "Has Unscored Jobs?", "type": "main", "index": 0 }]]
+    },
+    "Has Unscored Jobs?": {
+      "main": [
+        [{ "node": "Load Resume & Score", "type": "main", "index": 0 }],
+        [{ "node": "Skip (No Jobs)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Load Resume & Score": {
+      "main": [[{ "node": "Route by Score", "type": "main", "index": 0 }]]
+    },
+    "Route by Score": {
+      "main": [
+        [{ "node": "AUTO (80%+)", "type": "main", "index": 0 }],
+        [{ "node": "Filter Review from Skip", "type": "main", "index": 0 }]
+      ]
+    },
+    "Filter Review from Skip": {
+      "main": [
+        [{ "node": "REVIEW (60-79%)", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "timezone": "Asia/Kolkata",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": ["resume-matching", "scoring", "auto-apply"]
+}

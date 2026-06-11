@@ -1,0 +1,147 @@
+{
+  "name": "2 - Job Enrichment",
+  "nodes": [
+    {
+      "id": "trigger-schedule",
+      "name": "Every 30 Mins",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "minutes", "minutesInterval": 30 }
+          ]
+        }
+      }
+    },
+    {
+      "id": "gsheet-read",
+      "name": "Read Unenriched Jobs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [200, 0],
+      "parameters": {
+        "operation": "read",
+        "documentId": "YOUR_GOOGLE_SHEET_ID",
+        "sheetName": "Raw Jobs",
+        "options": {}
+      }
+    },
+    {
+      "id": "code-filter",
+      "name": "Filter Unenriched",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 0],
+      "parameters": {
+        "jsCode": "try {\n  const data = $input.filter(item => {\n    return !item.json.summary || item.json.summary.trim() === '';\n  });\n  if (data.length === 0) {\n    return [{ json: { _no_new_jobs: true } }];\n  }\n  return data.slice(0, 5);\n} catch(e) {\n  return [{ json: { _error: e.message } }];\n}"
+      }
+    },
+    {
+      "id": "if-has-jobs",
+      "name": "Has Jobs?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [600, 0],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json._no_new_jobs }}",
+              "operation": "isNotEmpty",
+              "value2": ""
+            }
+          ]
+        },
+        "options": { "rightExpression": true }
+      }
+    },
+    {
+      "id": "code-call-ollama",
+      "name": "Call Ollama & Parse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [800, -100],
+      "parameters": {
+        "jsCode": "// ── Build prompt from job data ──────────────────────────────────────────\nconst job = $json;\nconst prompt = `Extract structured data from this job posting. Return ONLY valid JSON, no other text.\n\nTitle: ${job.title}\nCompany: ${job.company}\nDescription: ${(job.description || '').substring(0, 3000)}\n\n{\n  \"required_years_experience\": <number>,\n  \"required_skills\": [\"skill1\", \"skill2\"],\n  \"preferred_skills\": [\"skill1\", \"skill2\"],\n  \"education_required\": \"<degree or ''>\",\n  \"seniority\": \"<junior|mid|senior|staff|lead|not specified>\",\n  \"is_remote\": <true|false>,\n  \"remote_policy\": \"<fully_remote|hybrid|on_site|not_specified>\",\n  \"has_visa_sponsorship\": <true|false>,\n  \"benefits\": [\"benefit1\", \"benefit2\"],\n  \"industry\": \"<industry>\",\n  \"summary\": \"<brief 2-sentence summary>\"\n}`;\n\n// ── Call Ollama (free local LLM) ──────────────────────────────────────\ntry {\n  const response = await fetch('http://localhost:11434/api/chat', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({\n      model: 'llama3.2',\n      stream: false,\n      messages: [{ role: 'user', content: prompt }]\n    })\n  });\n\n  if (!response.ok) {\n    throw new Error(`Ollama returned ${response.status}`);\n  }\n\n  const data = await response.json();\n  const rawContent = data?.message?.content || data?.response || '{}';\n\n  // ── Parse JSON from Ollama response ────────────────────────────────\n  let extracted = {};\n  try {\n    extracted = JSON.parse(rawContent);\n  } catch {\n    const match = rawContent.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n    if (match) {\n      try { extracted = JSON.parse(match[1]); } catch {}\n    }\n  }\n\n  return {\n    json: {\n      source_id: job.source_id,\n      source: job.source,\n      title: job.title,\n      company: job.company,\n      location: job.location,\n      country: job.country,\n      salary_min: job.salary_min,\n      salary_max: job.salary_max,\n      currency: job.currency,\n      description: job.description,\n      application_url: job.application_url,\n      posted_at: job.posted_at,\n      required_years_experience: extracted.required_years_experience ?? 0,\n      required_skills: (extracted.required_skills || []).join(', '),\n      preferred_skills: (extracted.preferred_skills || []).join(', '),\n      education_required: extracted.education_required || '',\n      seniority: extracted.seniority || 'not specified',\n      is_remote: extracted.is_remote ?? false,\n      remote_policy: extracted.remote_policy || 'not_specified',\n      has_visa_sponsorship: extracted.has_visa_sponsorship ?? false,\n      benefits: (extracted.benefits || []).join(', '),\n      industry: extracted.industry || '',\n      summary: extracted.summary || ''\n    }\n  };\n\n} catch(e) {\n  // ── Fallback: pass through job data with empty enrichment ───────────\n  return {\n    json: {\n      source_id: job.source_id,\n      source: job.source,\n      title: job.title,\n      company: job.company,\n      location: job.location,\n      country: job.country,\n      salary_min: job.salary_min,\n      salary_max: job.salary_max,\n      currency: job.currency,\n      description: job.description,\n      application_url: job.application_url,\n      posted_at: job.posted_at,\n      required_years_experience: 0,\n      required_skills: '',\n      preferred_skills: '',\n      education_required: '',\n      seniority: 'not specified',\n      is_remote: false,\n      remote_policy: 'not_specified',\n      has_visa_sponsorship: false,\n      benefits: '',\n      industry: '',\n      summary: '',\n      _enrich_error: e.message\n    }\n  };\n}"
+      }
+    },
+    {
+      "id": "gsheet-write",
+      "name": "Write to Enriched Jobs",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1000, -100],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": "YOUR_GOOGLE_SHEET_ID",
+        "sheetName": "Enriched Jobs",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "source_id": "={{ $json.source_id }}",
+            "source": "={{ $json.source }}",
+            "title": "={{ $json.title }}",
+            "company": "={{ $json.company }}",
+            "location": "={{ $json.location }}",
+            "country": "={{ $json.country }}",
+            "salary_min": "={{ $json.salary_min }}",
+            "salary_max": "={{ $json.salary_max }}",
+            "currency": "={{ $json.currency }}",
+            "description": "={{ $json.description }}",
+            "application_url": "={{ $json.application_url }}",
+            "posted_at": "={{ $json.posted_at }}",
+            "required_years_experience": "={{ $json.required_years_experience }}",
+            "required_skills": "={{ $json.required_skills }}",
+            "preferred_skills": "={{ $json.preferred_skills }}",
+            "education_required": "={{ $json.education_required }}",
+            "seniority": "={{ $json.seniority }}",
+            "is_remote": "={{ $json.is_remote }}",
+            "remote_policy": "={{ $json.remote_policy }}",
+            "has_visa_sponsorship": "={{ $json.has_visa_sponsorship }}",
+            "benefits": "={{ $json.benefits }}",
+            "industry": "={{ $json.industry }}",
+            "summary": "={{ $json.summary }}"
+          }
+        },
+        "options": { "cellFormat": "USER_ENTERED", "handlingExtraData": "insertInNewColumn" }
+      }
+    },
+    {
+      "id": "noop-skip",
+      "name": "Skip (No Jobs)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [800, 150],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Every 30 Mins": {
+      "main": [[{ "node": "Read Unenriched Jobs", "type": "main", "index": 0 }]]
+    },
+    "Read Unenriched Jobs": {
+      "main": [[{ "node": "Filter Unenriched", "type": "main", "index": 0 }]]
+    },
+    "Filter Unenriched": {
+      "main": [[{ "node": "Has Jobs?", "type": "main", "index": 0 }]]
+    },
+    "Has Jobs?": {
+      "main": [
+        [{ "node": "Call Ollama & Parse", "type": "main", "index": 0 }],
+        [{ "node": "Skip (No Jobs)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Call Ollama & Parse": {
+      "main": [[{ "node": "Write to Enriched Jobs", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "timezone": "Asia/Kolkata",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": ["job-enrichment", "ollama", "free"]
+}

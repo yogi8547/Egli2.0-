@@ -1,0 +1,138 @@
+# ── Job Automation Stack — 100% Free ───────────────────────────────────
+# n8n + PostgreSQL + Ollama (local LLM, no API keys needed)
+#
+# Deploy:
+#   cp .env.example .env   # Edit passwords
+#   docker compose up -d    # Start everything (first run pulls model)
+#
+# Access: http://localhost:5678
+# Cost:   $0/mo — everything runs locally
+# ────────────────────────────────────────────────────────────────────────────
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ── n8n: Workflow Automation Engine ─────────────────────────────────────
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: jobbot-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    mem_limit: 512m
+    environment:
+      GENERIC_TIMEZONE: "${TIMEZONE:-Asia/Kolkata}"
+      TZ: "${TIMEZONE:-Asia/Kolkata}"
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: "${POSTGRES_DB:-n8n}"
+      DB_POSTGRESDB_USER: "${POSTGRES_USER:-n8n}"
+      DB_POSTGRESDB_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}"
+      N8N_ENCRYPTION_KEY: "${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY}"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_RUNNERS_ENABLED: "true"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "168"
+      OLLAMA_HOST: "http://ollama:11434"
+    volumes:
+      - n8n-data:/home/node/.n8n
+      - ./resumes:/home/node/resumes:ro
+      - ./workflows:/home/node/workflows
+    networks:
+      - jobbot-net
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── PostgreSQL: n8n Database ──────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: jobbot-postgres
+    restart: unless-stopped
+    mem_limit: 512m
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-n8n}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB:-n8n}"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - jobbot-net
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-n8n} -d ${POSTGRES_DB:-n8n}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Ollama: Free Local LLM ────────────────────────────────────────────
+  # Runs llama3.2 on CPU (~2GB RAM). No API key required.
+  # Used by Workflow 2 for job description enrichment.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: jobbot-ollama
+    restart: unless-stopped
+    mem_limit: 2g
+    environment:
+      OLLAMA_HOST: "0.0.0.0"
+    volumes:
+      - ollama-data:/root/.ollama
+    networks:
+      - jobbot-net
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 600s
+
+  # ── Ollama Model Puller (one-shot setup) ──────────────────────────────
+  ollama-setup:
+    image: ollama/ollama:latest
+    container_name: jobbot-ollama-setup
+    depends_on:
+      ollama:
+        condition: service_started
+    volumes:
+      - ollama-data:/root/.ollama
+    entrypoint: >
+      sh -c "
+        echo 'Waiting for Ollama server...' &&
+        sleep 10 &&
+        until ollama list 2>/dev/null; do echo 'Waiting...'; sleep 5; done &&
+        echo 'Pulling llama3.2 model (free, ~2GB download)...' &&
+        ollama pull llama3.2 &&
+        echo 'Model pulled successfully'
+      "
+    networks:
+      - jobbot-net
+    logging: *default-logging
+
+networks:
+  jobbot-net:
+    driver: bridge
+    name: jobbot-network
+
+volumes:
+  n8n-data:
+    name: jobbot-n8n-data
+  postgres-data:
+    name: jobbot-postgres-data
+  ollama-data:
+    name: jobbot-ollama-data
